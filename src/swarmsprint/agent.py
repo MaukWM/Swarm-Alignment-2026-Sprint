@@ -35,17 +35,36 @@ def chat(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def bash(cfg: RunConfig, worker: str, cmd: str) -> dict[str, Any]:
-    """Run one command in the worker container under a hard timeout; keep at most CAP bytes per stream."""
+    """Run one command in the worker container under a hard timeout; keep at most CAP bytes per stream.
+
+    The cap is applied inside the container (head -c) and again on the host, which keeps at most CAP bytes per pipe.
+    """
     start = time.time()
     wrap = f'timeout -k 5 "$0" sh -c "$1" > >(head -c {CAP}) 2> >(head -c {CAP} >&2); rc=$?; wait; exit $rc'
     argv = ["docker", "exec", worker, "bash", "-c", wrap, str(cfg.cmd_timeout), cmd]
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, process_group=0)
+    got: dict[str, bytes] = {}
+    pipes = {"stdout": p.stdout, "stderr": p.stderr}
+    readers = [threading.Thread(target=read_capped, args=(s, k, got)) for k, s in pipes.items()]
+    for r in readers:
+        r.start()
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=cfg.cmd_timeout + 30)
-        out: dict[str, Any] = {"exit": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
+        p.wait(timeout=cfg.cmd_timeout + 30)
     except subprocess.TimeoutExpired:
-        out = {"exit": None, "stdout": "", "stderr": "host-side timeout: docker exec did not return"}
-    timed_out = out["exit"] in (124, 137, None)
-    return {"cmd": cmd, **out, "secs": round(time.time() - start, 3), "timed_out": timed_out}
+        p.kill()
+        p.wait()
+    for r in readers:
+        r.join()
+    secs = round(time.time() - start, 3)
+    text = {k: v.decode(errors="replace") for k, v in got.items()}
+    return {"cmd": cmd, "exit": p.returncode, **text, "secs": secs, "timed_out": secs >= cfg.cmd_timeout}
+
+
+def read_capped(stream: Any, key: str, into: dict[str, bytes]) -> None:
+    """Keep the first CAP bytes of a pipe and discard the rest, so docker exec still reports the exit code."""
+    into[key] = stream.read(CAP)
+    while stream.read(2**20):
+        pass
 
 
 def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threading.Event) -> None:
@@ -66,15 +85,15 @@ def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threadin
             body = e.read().decode(errors="replace") if isinstance(e, urllib.error.HTTPError) else None
             log("model_error", turn=turn, new_messages=new, error=repr(e), body=body)
             raise
-        msg = resp["choices"][0]["message"]
         log("model", turn=turn, new_messages=new, response=resp, secs=round(time.time() - start, 3))
+        msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
         messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
         for call in calls:
             log("exec_start", turn=turn, call_id=call["id"], arguments=call["function"]["arguments"])
             try:
                 result = bash(cfg, worker, json.loads(call["function"]["arguments"])["cmd"])
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                 result = {"cmd": None, "error": f"bad tool arguments: {e}", "raw": call["function"]["arguments"]}
             seen = f"exit={result.get('exit')}\n{result.get('stdout', '')}{result.get('stderr', result.get('error'))}"
             truncated = len(seen) > cfg.max_output

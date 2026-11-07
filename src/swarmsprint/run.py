@@ -3,10 +3,14 @@
 usage: python -m swarmsprint.run experiments/<config>.toml   (writes runs/<name>-<timestamp>/)
 """
 
+import contextlib
+import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 from pathlib import Path
@@ -15,6 +19,19 @@ from typing import Any
 from swarmsprint import containers
 from swarmsprint.agent import BASH, Log, run_agent
 from swarmsprint.config import RunConfig, load
+
+ARCHIVE_CAP = 300 * 2**20  # bytes per /team tar; the drive holds 256 MB but sparse files can expand
+
+
+def ignore_signals() -> None:
+    """Ignore further Ctrl-C, SIGTERM and SIGHUP."""
+    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)
+
+
+def interrupt(signum: int, frame: Any) -> None:
+    """Turn SIGTERM and SIGHUP into the same clean stop as Ctrl-C."""
+    raise KeyboardInterrupt
 
 
 def git(*args: str) -> str:
@@ -25,6 +42,10 @@ def git(*args: str) -> str:
 def main(path: str) -> int:
     """Run the config; return 0 only if every agent finished and every /team drive was archived."""
     cfg = load(path)
+    if left := containers.existing(cfg):
+        sys.exit(f"run {cfg.name!r} still has docker resources {left}; inspect them, then `containers down`")
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGHUP, interrupt)
     out = Path("runs") / f"{cfg.name}-{time.strftime('%Y%m%d-%H%M%S')}"
     out.mkdir(parents=True)
     lock, f, seq, t0 = threading.Lock(), open(out / "events.jsonl", "w"), [0], time.monotonic()
@@ -66,11 +87,16 @@ def main(path: str) -> int:
             for t in threads:
                 t.join()
         except KeyboardInterrupt:
+            ignore_signals()  # uv forwards a second Ctrl-C; let the agents finish their turn and log their stop
             stop.set()
             failed.append("interrupted")
             for t in threads:
                 t.join()
+    except BaseException as e:
+        failed.append(f"aborted: {e!r}")
+        raise
     finally:
+        ignore_signals()  # a second signal must not break the cleanup
         archived = all(archive(cfg, workers, out, log))
         if archived:
             containers.down(cfg)
@@ -81,18 +107,59 @@ def main(path: str) -> int:
 
 
 def archive(cfg: RunConfig, workers: list[tuple[str, str, int]], out: Path, log: Log) -> list[bool]:
-    """Copy each group's /team drive into the run directory; log success or failure per group."""
-    results = []
-    for g in cfg.groups if workers else []:
-        worker = next(w for w, group, _ in workers if group == g.name)
-        try:
-            containers.docker("cp", f"{worker}:/team", str(out / f"team-{g.name}"))
-            log("archive", group=g.name, ok=True)
-            results.append(True)
-        except Exception as e:
-            log("archive", group=g.name, ok=False, error=repr(e))
-            results.append(False)
-    return results
+    """Freeze all workers, then archive each group's /team; one result per group."""
+    for w, _, _ in workers:
+        with contextlib.suppress(subprocess.CalledProcessError):  # already exited or paused: nothing to freeze
+            containers.docker("pause", w)
+    return [archive_group(cfg, g.name, out, log) for g in cfg.groups] if workers else []
+
+
+def archive_group(cfg: RunConfig, group: str, out: Path, log: Log) -> bool:
+    """Stream a group's /team from its keeper container into team-<group>.tar (cap + 1 MB at most); never raises."""
+    tar, digest, size = out / f"team-{group}.tar", hashlib.sha256(), 0
+    try:
+        labels = [f"label=swarmsprint.run={cfg.name}", f"label=swarmsprint.group={group}", "label=swarmsprint.keeper=1"]
+        keeper = containers.docker("ps", "-q", *(a for lbl in labels for a in ("--filter", lbl)))
+        p = subprocess.Popen(["docker", "cp", f"{keeper}:/team", "-"], stdout=subprocess.PIPE, process_group=0)
+        assert p.stdout is not None
+        with tar.open("wb") as f:
+            while size <= ARCHIVE_CAP and (chunk := p.stdout.read(2**20)):
+                f.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+        p.kill()
+        ok = p.wait() == 0 and size <= ARCHIVE_CAP
+        skipped = unpack(tar, out / f"team-{group}") if ok else []
+        log(
+            "archive",
+            group=group,
+            ok=ok,
+            bytes=size,
+            sha256=digest.hexdigest(),
+            file=tar.name,
+            exit=p.returncode,
+            skipped=skipped,
+        )
+        return ok
+    except Exception as e:
+        log("archive", group=group, ok=False, bytes=size, error=repr(e))
+        return False
+
+
+def unpack(tar: Path, dest: Path) -> list[str]:
+    """Extract a readable copy with tarfile's data filter; return the entries it refused (links out, devices, FIFOs)."""
+    skipped = []
+    dest.mkdir()
+    with tarfile.open(tar) as tf:
+        for member in tf:
+            if "/" not in member.name:
+                continue  # the top-level team/ folder itself
+            member = member.replace(name=member.name.split("/", 1)[1], deep=False)
+            try:
+                tf.extract(member, dest, filter="data")
+            except tarfile.FilterError as e:
+                skipped.append(f"{member.name}: {e}")
+    return skipped
 
 
 def drive(

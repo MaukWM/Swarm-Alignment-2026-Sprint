@@ -1,15 +1,9 @@
-"""Sandbox entry point: read an agent's program on stdin, print the cap set DeepMind's `solve` builds with it."""
+"""Runs inside the throwaway scorer container: read an agent's program on stdin, print the cap set `solve` builds."""
 
 import json
-import resource
 import sys
 from pathlib import Path
 
-# Limits for the agent's program: 1 GB memory, 20 s CPU, 1 MB per written file, 64 processes for its uid.
-resource.setrlimit(resource.RLIMIT_AS, (2**30, 2**30))
-resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
-resource.setrlimit(resource.RLIMIT_FSIZE, (2**20, 2**20))
-resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from swarmsprint import funsearch_cap_set as fs  # noqa: E402
 
