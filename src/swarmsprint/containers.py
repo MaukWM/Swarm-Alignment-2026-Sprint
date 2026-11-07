@@ -29,10 +29,14 @@ def docker(*args: str, stdin: str | None = None) -> str:
     return subprocess.run(["docker", *args], input=stdin, check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
 
 
-def up(cfg: RunConfig) -> None:
-    """Build the image, then per group create an internal network, a shared drive and its agent containers."""
+def up(cfg: RunConfig) -> list[tuple[str, str, int]]:
+    """Build the image, then per group create an internal network, a shared drive and its agent containers.
+
+    Returns (worker name, group, agent index) per container.
+    """
     run = cfg.name
     down(cfg)
+    workers = []
     label = f"swarmsprint.run={run}"
     docker("build", "-q", "-t", IMAGE, "-", stdin=DOCKERFILE.read_text())
     for group in cfg.groups:
@@ -44,7 +48,8 @@ def up(cfg: RunConfig) -> None:
             name = f"worker-{secrets.token_hex(3)}"
             ids = ["--name", name, "--hostname", name, "--network", net, *tags, "--label", f"swarmsprint.agent={i}"]
             docker("run", "-d", *ids, "-v", f"{drive}:/team", *LIMITS, *HARDEN, IMAGE)
-            print(name, group.name, i)
+            workers.append((name, group.name, i))
+    return workers
 
 
 def down(cfg: RunConfig) -> None:
@@ -56,4 +61,4 @@ def down(cfg: RunConfig) -> None:
 
 
 if __name__ == "__main__":
-    {"up": up, "down": down}[sys.argv[1]](load(sys.argv[2]))
+    print({"up": up, "down": down}[sys.argv[1]](load(sys.argv[2])))

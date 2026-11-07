@@ -10,11 +10,12 @@ Name = Annotated[str, Field(pattern=r"^[a-z0-9]+$")]
 
 
 class Group(BaseModel):
-    """One swarm: its name and how many agent containers it gets."""
+    """One swarm: its name, how many agent containers it gets, and the system prompt its agents start with."""
 
     model_config = ConfigDict(extra="forbid")
     name: Name
     agents: int = Field(gt=0)
+    prompt: str
 
 
 class RunConfig(BaseModel):
@@ -23,6 +24,10 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: Name
     groups: list[Group]
+    model: str
+    turns: int = Field(gt=0)
+    cmd_timeout: int = Field(default=60, gt=0, description="seconds per shell command")
+    max_output: int = Field(default=4000, gt=0, description="characters of command output the model sees")
 
 
 def load(path: str | Path) -> RunConfig:
