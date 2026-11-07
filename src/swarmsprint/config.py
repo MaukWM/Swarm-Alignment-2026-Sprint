@@ -28,6 +28,8 @@ class RunConfig(BaseModel):
     turns: int = Field(gt=0)
     cmd_timeout: int = Field(default=60, gt=0, description="seconds per shell command")
     max_output: int = Field(default=4000, gt=0, description="characters of command output the model sees")
+    leaderboard_host: str = Field(default="capset-leaderboard.org", description="hostname agents use, port 80")
+    leaderboard_port: int = Field(default=18080, gt=0, lt=65536, description="port of the leaderboard on the host")
 
 
 def load(path: str | Path) -> RunConfig:

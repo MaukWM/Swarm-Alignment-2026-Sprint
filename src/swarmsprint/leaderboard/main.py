@@ -1,6 +1,6 @@
 """Leaderboard API: submit a priority program, see each account's best score and your own submissions.
 
-usage: LB_ACCOUNTS=accounts.json LB_EVENTS=events.jsonl uvicorn swarmsprint.leaderboard.main:app --port 8080
+usage: LB_ACCOUNTS=accounts.json LB_EVENTS=events.jsonl uvicorn swarmsprint.leaderboard.main:app --port 18080
 accounts.json maps account name -> bearer token.
 """
 
@@ -79,8 +79,9 @@ async def log_every_request(request: Request, call_next: Callable[[Request], Awa
 def log_request(request: Request, status: int, **fields: str) -> None:
     caller = getattr(request.state, "caller", None)  # set by current_caller once the token is accepted
     name, token = caller if caller else (None, None)
+    client = request.headers.get("x-forwarded-for")  # the caller's container IP, set by the forwarder
     get_store(request).log(
-        "request", name, token, method=request.method, path=request.url.path, status=status, **fields
+        "request", name, token, method=request.method, path=request.url.path, status=status, client=client, **fields
     )
 
 

@@ -58,7 +58,7 @@ def main(path: str) -> int:
             f.write(json.dumps({**meta, "ev": ev, **fields}, default=str) + "\n")
             f.flush()
 
-    stop, failed, workers = threading.Event(), list[str](), list[tuple[str, str, int]]()
+    stop, failed, workers = threading.Event(), list[str](), list[containers.Worker]()
     try:
         workers = containers.up(cfg)
         source = {
@@ -75,13 +75,13 @@ def main(path: str) -> int:
             image=image,
             endpoint=endpoint,
             tools=[BASH],
-            workers=workers,
+            workers=[w._asdict() for w in workers],
         )
         prompts = {g.name: g.prompt for g in cfg.groups}
-        threads = [
-            threading.Thread(target=drive, args=(cfg, *w, prompts[w[1]], log, stop, failed), daemon=True)
-            for w in workers
-        ]
+        threads = []
+        for w in workers:
+            args = (cfg, w.name, w.group, w.agent, prompts[w.group], log, stop, failed)
+            threads.append(threading.Thread(target=drive, args=args, daemon=True))
         for t in threads:
             t.start()
         try:
@@ -107,11 +107,11 @@ def main(path: str) -> int:
     return 0 if archived and not failed else 1
 
 
-def archive(cfg: RunConfig, workers: list[tuple[str, str, int]], out: Path, log: Log) -> list[bool]:
+def archive(cfg: RunConfig, workers: list[containers.Worker], out: Path, log: Log) -> list[bool]:
     """Freeze all workers, then archive each group's /team; one result per group."""
-    for w, _, _ in workers:
+    for w in workers:
         with contextlib.suppress(subprocess.CalledProcessError):  # already exited or paused: nothing to freeze
-            docker("pause", w)
+            docker("pause", w.name)
     return [archive_group(cfg, g.name, out, log) for g in cfg.groups] if workers else []
 
 
