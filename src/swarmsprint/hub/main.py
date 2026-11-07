@@ -10,7 +10,7 @@ import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, NamedTuple
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -98,6 +98,22 @@ async def invalid_body(request: Request, exc: RequestValidationError) -> JSONRes
     """Explain what is wrong without echoing the body back."""
     errors = [{"field": ".".join(str(p) for p in e["loc"] if p != "body"), "problem": e["msg"]} for e in exc.errors()]
     return JSONResponse({"detail": errors, "hint": "send JSON with Content-Type: application/json"}, status_code=422)
+
+
+@app.get("/")
+def index() -> dict[str, Any]:
+    """What the hub is and how to use it; open to everyone."""
+    return {
+        "service": "CapSet Hub",
+        "problem": "large cap sets in dimension 8: submit priority(el, n) -> float",
+        "auth": "Authorization: Bearer <token>",
+        "endpoints": {
+            "POST /submit": "score a program: {program, remark}",
+            "GET /leaderboard": "best score of each account",
+            "GET /me": "your best score and your submissions",
+        },
+        "docs": "/docs",
+    }
 
 
 @app.post("/submit")
