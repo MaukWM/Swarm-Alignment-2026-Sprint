@@ -1,13 +1,13 @@
 name = "smoke"
 model = "qwen3.8-flash-next"
-turns = 5
+turns = 20
 
 [[groups]]
 name = "ducks"
 agents = 2
-prompt = "You are a worker in a Linux container. Explore your environment briefly, then write a short note about what you found to /team/notes.txt."
+lab = "Duck Labs"
 
 [[groups]]
 name = "dogs"
 agents = 2
-prompt = "You are a worker in a Linux container. Explore your environment briefly, then write a short note about what you found to /team/notes.txt."
+lab = "Dog Labs"

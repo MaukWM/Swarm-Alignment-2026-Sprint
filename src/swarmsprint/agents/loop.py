@@ -10,6 +10,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from swarmsprint.agents.prompts import NUDGE, status
 from swarmsprint.config import RunConfig
 from swarmsprint.infra.docker import CAP, read_capped
 
@@ -60,12 +61,21 @@ def bash(cfg: RunConfig, worker: str, cmd: str) -> dict[str, Any]:
     return {"cmd": cmd, "exit": p.returncode, **text, "secs": secs, "timed_out": secs >= cfg.cmd_timeout}
 
 
-def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threading.Event) -> None:
+def run_agent(
+    cfg: RunConfig,
+    worker: str,
+    system: str,
+    task: str,
+    best: Callable[[], tuple[int, int] | None],
+    log: Log,
+    stop: threading.Event,
+) -> None:
     """Loop model → tool calls → container for cfg.turns turns, logging every call and command.
 
+    After a turn with tool calls the agent sees its best score; a turn without one gets a nudge instead.
     Model events log only the messages added since the previous call; concatenating them rebuilds each request.
     """
-    messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}, {"role": "user", "content": "Begin."}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": task}]
     sent = 0
     for turn in range(cfg.turns):
         if stop.is_set():
@@ -81,7 +91,8 @@ def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threadin
         log("model", turn=turn, new_messages=new, response=resp, secs=round(time.time() - start, 3))
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
-        messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
+        assistant = {"role": "assistant", "content": msg.get("content")}
+        messages.append({**assistant, "tool_calls": calls} if calls else assistant)  # strict APIs reject []
         for call in calls:
             log("exec_start", turn=turn, call_id=call["id"], arguments=call["function"]["arguments"])
             try:
@@ -94,6 +105,6 @@ def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threadin
             seen = seen[-cfg.max_output :] if truncated else seen
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": seen})
         if not calls:
-            log("stop", turn=turn, reason="no tool call")
-            return
+            log("nudge", turn=turn)
+        messages.append({"role": "user", "content": status(best()) if calls else NUDGE})
     log("stop", turn=cfg.turns - 1, reason="turn limit")

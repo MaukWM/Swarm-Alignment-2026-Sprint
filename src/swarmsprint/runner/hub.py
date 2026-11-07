@@ -6,6 +6,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -76,3 +77,25 @@ def wait_ready(cfg: RunConfig, server: subprocess.Popen[bytes]) -> None:
         except OSError:
             time.sleep(0.5)
     raise SystemExit("the hub did not answer within 30 s")
+
+
+class Scores:
+    """Each account's best scored submission so far, read from the hub's event log (so it adds no hub traffic)."""
+
+    def __init__(self, events: Path) -> None:
+        self.events, self.offset, self.lock = events, 0, threading.Lock()
+        self.best: dict[str, tuple[int, int]] = {}
+
+    def of(self, account: str) -> tuple[int, int] | None:
+        """(score, submission id) of the account's best submission, or None before its first score."""
+        with self.lock, self.events.open("rb") as f:
+            f.seek(self.offset)
+            complete, newline, _ = f.read().rpartition(b"\n")  # a line still being written waits for the next call
+            self.offset += len(complete) + len(newline)
+            for line in complete.split(b"\n") if newline else []:
+                e = json.loads(line)
+                if e["ev"] == "submit" and e["response"]["score"] is not None:
+                    score, sid = e["response"]["score"], e["response"]["id"]
+                    if e["account"] not in self.best or score > self.best[e["account"]][0]:
+                        self.best[e["account"]] = (score, sid)
+            return self.best.get(account)

@@ -10,12 +10,12 @@ Name = Annotated[str, Field(pattern=r"^[a-z0-9]+$")]
 
 
 class Group(BaseModel):
-    """One swarm: its name, how many agent containers it gets, and the system prompt its agents start with."""
+    """One swarm: its internal name, how many agent containers it gets, and the lab name its agents work for."""
 
     model_config = ConfigDict(extra="forbid")
     name: Name
     agents: int = Field(gt=0)
-    prompt: str
+    lab: str = Field(min_length=1, description="the lab name the agents see")
 
 
 class RunConfig(BaseModel):

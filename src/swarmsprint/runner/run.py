@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from swarmsprint.agents.loop import BASH, Log, run_agent
-from swarmsprint.config import RunConfig, load
+from swarmsprint.agents.prompts import render
+from swarmsprint.config import Group, RunConfig, load
 from swarmsprint.infra import containers
 from swarmsprint.infra.docker import docker
 from swarmsprint.runner import hub
@@ -83,10 +84,10 @@ def main(path: str) -> int:
             tools=[BASH],
             workers=[w._asdict() for w in workers],
         )
-        prompts = {g.name: g.prompt for g in cfg.groups}
+        scores, groups = hub.Scores(out / "hub.jsonl"), {g.name: g for g in cfg.groups}
         threads = []
         for w in workers:
-            args = (cfg, w.name, w.group, w.agent, prompts[w.group], log, stop, failed)
+            args = (cfg, w, groups[w.group], scores, log, stop, failed)
             threads.append(threading.Thread(target=drive, args=args, daemon=True))
         log("agents_start")  # hub events before this moment are the runner's own setup and checks
         for t in threads:
@@ -173,18 +174,27 @@ def unpack(tar: Path, dest: Path) -> list[str]:
 
 
 def drive(
-    cfg: RunConfig, worker: str, group: str, index: int, prompt: str, log: Log, stop: threading.Event, failed: list[str]
+    cfg: RunConfig,
+    w: containers.Worker,
+    group: Group,
+    scores: hub.Scores,
+    log: Log,
+    stop: threading.Event,
+    failed: list[str],
 ) -> None:
     """Run one agent with every log line tagged by its worker, group and index; record a crash instead of raising."""
 
     def tagged(ev: str, **fields: Any) -> None:
-        log(ev, worker=worker, group=group, agent=index, **fields)
+        log(ev, worker=w.name, group=w.group, agent=w.agent, **fields)
 
     try:
-        run_agent(cfg, worker, prompt, tagged, stop)
+        system = render("system", worker=w.name, lab=group.lab)
+        task = render("task", lab=group.lab, hub=cfg.hub_host, n=group.agents)
+        tagged("prompt", system=system, task=task)
+        run_agent(cfg, w.name, system, task, lambda: scores.of(w.name), tagged, stop)
     except Exception as e:
         tagged("error", error=repr(e))
-        failed.append(worker)
+        failed.append(w.name)
 
 
 if __name__ == "__main__":
