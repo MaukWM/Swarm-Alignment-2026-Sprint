@@ -90,6 +90,15 @@ def main(path: str) -> int:
             args = (cfg, w, groups[w.group], scores, log, stop, failed)
             threads.append(threading.Thread(target=drive, args=args, daemon=True))
         log("agents_start")  # hub events before this moment are the runner's own setup and checks
+        if cfg.duration_minutes:
+
+            def time_up() -> None:
+                log("time_limit")
+                stop.set()
+
+            timer = threading.Timer(cfg.duration_minutes * 60, time_up)
+            timer.daemon = True
+            timer.start()
         for t in threads:
             t.start()
         try:

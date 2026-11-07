@@ -1,5 +1,7 @@
 """One agent: a model with a bash tool, driving its own worker container turn by turn."""
 
+import http.client
+import itertools
 import json
 import os
 import subprocess
@@ -15,6 +17,7 @@ from swarmsprint.config import RunConfig
 from swarmsprint.infra.docker import CAP, read_capped
 
 Log = Callable[..., None]
+ATTEMPTS = 3  # model calls per turn before the agent gives up (transient errors only)
 BASH = {
     "type": "function",
     "function": {
@@ -26,12 +29,39 @@ BASH = {
 
 
 def chat(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
-    """Call the OpenAI-compatible chat completions endpoint with the bash tool."""
-    body = json.dumps({"model": cfg.model, "messages": messages, "tools": [BASH]}).encode()
+    """Call the chat endpoint with the bash tool, streamed so long reasoning cannot hit a gateway timeout.
+
+    The streamed deltas are put back together into the usual non-streamed response shape.
+    """
+    stream = {"stream": True, "stream_options": {"include_usage": True}}
+    body = json.dumps({"model": cfg.model, "messages": messages, "tools": [BASH], **stream}).encode()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('LLM_API_KEY', '')}"}
     req = urllib.request.Request(os.environ["LLM_BASE_URL"], body, headers)
+    msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": []}
+    choice: dict[str, Any] = {"message": msg, "finish_reason": None}
+    out: dict[str, Any] = {"choices": [choice]}
     with urllib.request.urlopen(req, timeout=600) as r:
-        out: dict[str, Any] = json.load(r)
+        for line in r:
+            if not line.startswith(b"data: ") or line.strip() == b"data: [DONE]":
+                continue
+            chunk = json.loads(line[6:])
+            out["model"], out["usage"] = chunk.get("model", out.get("model")), chunk.get("usage") or out.get("usage")
+            for c in chunk.get("choices") or []:
+                delta = c.get("delta") or {}
+                msg["content"] += delta.get("content") or ""
+                msg["reasoning_content"] += delta.get("reasoning_content") or delta.get("reasoning") or ""
+                for tc in delta.get("tool_calls") or []:
+                    while len(msg["tool_calls"]) <= tc.get("index", 0):
+                        msg["tool_calls"].append(
+                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                        )
+                    slot, fn = msg["tool_calls"][tc.get("index", 0)], tc.get("function") or {}
+                    slot["id"] = tc.get("id") or slot["id"]
+                    slot["function"]["name"] += fn.get("name") or ""
+                    slot["function"]["arguments"] += fn.get("arguments") or ""
+                choice["finish_reason"] = c.get("finish_reason") or choice["finish_reason"]
+    for i, call in enumerate(msg["tool_calls"]):
+        call["id"] = call["id"] or f"call_{i}"  # some servers stream no id; tool results must refer to one
     return out
 
 
@@ -70,24 +100,34 @@ def run_agent(
     log: Log,
     stop: threading.Event,
 ) -> None:
-    """Loop model → tool calls → container for cfg.turns turns, logging every call and command.
+    """Loop model → tool calls → container until stopped or out of turns, logging every call and command.
 
     After a turn with tool calls the agent sees its best score; a turn without one gets a nudge instead.
     Model events log only the messages added since the previous call; concatenating them rebuilds each request.
     """
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": task}]
     sent = 0
-    for turn in range(cfg.turns):
-        if stop.is_set():
-            log("stop", turn=turn, reason="interrupted")
+    for turn in itertools.count():
+        if stop.is_set() or turn == cfg.turns:
+            log("stop", turn=turn, reason="turn limit" if turn == cfg.turns else "stopped")
             return
-        start, new, sent = time.time(), messages[sent:], len(messages)
-        try:
-            resp = chat(cfg, messages)
-        except Exception as e:
-            body = e.read().decode(errors="replace") if isinstance(e, urllib.error.HTTPError) else None
-            log("model_error", turn=turn, new_messages=new, error=repr(e), body=body)
-            raise
+        new, sent = messages[sent:], len(messages)
+        for attempt in range(1, ATTEMPTS + 1):
+            start = time.time()
+            try:
+                resp = chat(cfg, messages)
+                break
+            except (OSError, http.client.HTTPException) as e:  # URLError and HTTPError are OSErrors
+                body = e.read().decode(errors="replace") if isinstance(e, urllib.error.HTTPError) else None
+                transient = not isinstance(e, urllib.error.HTTPError) or e.code in (429, 500, 502, 503, 504)
+                final = attempt == ATTEMPTS or not transient
+                request = {"new_messages": new} if final else {}  # logged once, when the turn is given up
+                log("model_error", turn=turn, attempt=attempt, error=repr(e), body=body, **request)
+                if final:
+                    raise
+                if stop.wait(10 * attempt):
+                    log("stop", turn=turn, reason="stopped")
+                    return
         log("model", turn=turn, new_messages=new, response=resp, secs=round(time.time() - start, 3))
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
@@ -107,4 +147,3 @@ def run_agent(
         if not calls:
             log("nudge", turn=turn)
         messages.append({"role": "user", "content": status(best()) if calls else NUDGE})
-    log("stop", turn=cfg.turns - 1, reason="turn limit")
