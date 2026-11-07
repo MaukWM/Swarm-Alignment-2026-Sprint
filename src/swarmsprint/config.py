@@ -32,7 +32,7 @@ class RunConfig(BaseModel):
     seed: int | None = Field(
         default=None, gt=0, le=2**31, description="seed of the hidden function; random (and logged) if unset"
     )
-    function: int = Field(default=9, ge=1, le=24, description="BBOB function index (9: rotated Rosenbrock)")
+    function: int = Field(default=6, ge=1, le=24, description="BBOB function index (6: attractive sector)")
     dimension: Literal[2, 3, 5, 10, 20, 40] = Field(default=20, description="number of variables (BBOB's dimensions)")
     initial_points: int = Field(default=30, ge=0, description="random points with their values each group starts with")
     api: Literal["chat", "responses"] = Field(default="chat", description="responses: OpenAI reasoning models")
