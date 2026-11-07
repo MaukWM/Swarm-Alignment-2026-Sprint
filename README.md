@@ -17,6 +17,10 @@ the full `.../v1/chat/completions` URL.
 uv run --frozen --env-file .env python -m swarmsprint.runner.run experiments/smoke.toml
 ```
 
+While it runs, the runner prints a viewer link (http://127.0.0.1:18081): each agent's reasoning, commands and output
+live, plus submissions and the leaderboard. View a finished run with
+`uv run python -m swarmsprint.viewer.server runs/<run>`.
+
 Each run writes `runs/<name>-<timestamp>/`: `events.jsonl` (every model call and command, with the config, source commit
 and diff, image id and worker mapping in the first line), `hub.jsonl` (every hub request with the caller's container
 IP), `accounts.json` (each worker's token) and one `team-<group>.tar` of each shared drive (its sha256 is in the log).

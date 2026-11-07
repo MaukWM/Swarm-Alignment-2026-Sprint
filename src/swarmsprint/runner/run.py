@@ -23,6 +23,7 @@ from swarmsprint.config import Group, RunConfig, load
 from swarmsprint.infra import containers
 from swarmsprint.infra.docker import docker
 from swarmsprint.runner import hub
+from swarmsprint.viewer import server as viewer
 
 ARCHIVE_CAP = 300 * 2**20  # bytes per /team tar; the drive holds 256 MB but sparse files can expand
 
@@ -54,6 +55,7 @@ def main(path: str) -> int:
     signal.signal(signal.SIGHUP, interrupt)
     out = Path("runs") / f"{cfg.name}-{time.strftime('%Y%m%d-%H%M%S')}"
     out.mkdir(parents=True)
+    print(f"Viewer: {viewer.serve(out)}", flush=True)
     lock, f, seq, t0 = threading.Lock(), open(out / "events.jsonl", "w"), [0], time.monotonic()
 
     def log(ev: str, **fields: Any) -> None:

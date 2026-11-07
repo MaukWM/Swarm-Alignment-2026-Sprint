@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run viewer</title>
+<style>
+  :root {
+    --bg: #111317; --panel: #181b21; --card: #1f232b; --line: #2b313b; --hover: #232833;
+    --ink: #e6e8eb; --ink2: #a3a9b3; --muted: #6c7380; --bad: #f2716b; --fresh: #f5c451;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 system-ui, sans-serif; height: 100vh;
+         display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+  header { display: flex; gap: 22px; align-items: baseline; padding: 10px 18px; border-bottom: 1px solid var(--line); }
+  header b { font-size: 15px; }
+  header .r { margin-left: auto; display: flex; gap: 18px; }
+  .sub2 { color: var(--ink2); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 1fr;
+         gap: 14px; padding: 14px; min-height: 0; }
+  section { background: var(--panel); border-radius: 6px; padding: 12px 14px; min-height: 0; overflow: auto; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; padding: 4px 6px; }
+  td { padding: 7px 6px; border-top: 1px solid var(--line); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.click, .click { cursor: pointer; }
+  tr.click:hover, .click:hover { background: var(--hover); }
+  #board td { font-size: 14px; }
+  #board td.now { font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                  max-width: 260px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+  .meta { color: var(--muted); font-size: 11px; }
+  #files { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .file { display: flex; gap: 8px; padding: 3px 6px; border-radius: 3px; font: 12px/1.5 var(--mono); }
+  .file span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file.fresh span:first-child { color: var(--fresh); }
+  .labhead { border-bottom: 2px solid var(--lab); padding-bottom: 4px; margin-bottom: 6px; font-weight: 600; }
+  #chart svg { width: 100%; height: 230px; display: block; }
+  #chart text { fill: var(--muted); font-size: 11px; }
+  #feed .row { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; padding: 5px 6px; border-top: 1px solid var(--line); }
+  #feed .remark { color: var(--ink2); grid-column: 2 / 4; }
+  .err { color: var(--bad); }
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); background: var(--panel);
+           border-left: 1px solid var(--line); box-shadow: -12px 0 30px #0008; display: none; flex-direction: column; }
+  #panel.open { display: flex; }
+  #panel .top { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  #panel .top button { margin-left: auto; background: none; border: 0; color: var(--ink2); font-size: 20px; cursor: pointer; }
+  #panel .body { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px; }
+  .feedcol { display: flex; flex-direction: column; gap: 6px; }
+  .card { background: var(--card); border-radius: 4px; padding: 6px 8px; }
+  .card.say { border-left: 2px solid var(--lab); }
+  .card.err { color: var(--bad); }
+  pre { margin: 4px 0 0; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  .card pre { max-height: 360px; overflow: auto; }
+  .cmd > pre:first-of-type { color: #c9d6ff; }
+  details > summary { cursor: pointer; color: var(--ink2); }
+  .line { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <b id="run">loading…</b><span class="sub2" id="model"></span><span id="clock"></span><span class="sub2" id="state"></span>
+  <span class="r" id="labsubs"></span>
+</header>
+<main>
+  <section><h2>Leaderboard · fewest bins</h2><table id="board"></table></section>
+  <section id="chart"><h2>Best score over time</h2><svg></svg></section>
+  <section><h2>Shared drives · /team</h2><div id="files"></div></section>
+  <section><h2>Submissions</h2><div id="feed"></div></section>
+</main>
+<aside id="panel"><div class="top"><b id="ptitle"></b><span class="sub2" id="psub"></span><button onclick="closePanel()">×</button></div><div class="body" id="pbody"></div></aside>
+<script>
+const LAB_COLORS = ["#5b8def", "#e8913a", "#b07cf0", "#4fbfa8"];
+const offsets = { events: 0, hub: 0 };
+const workers = {};   // name -> {group, lab, color, agent, feed, now, nowT, subs}
+const labs = {};      // group -> {lab, color, subs, files, seen}
+const best = {};      // account -> {score, id}
+const history = {};   // account -> [[t, best]]
+const subs = {};      // id -> {received, response, account, t}
+let t0 = null, tEnd = null, duration = null, ended = false, panel = null;
+
+const $ = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const clip = (s, n) => s.length > n ? s.slice(0, n) + "…" : s;
+const fold = (label, body) => { const d = $("details"); d.append($("summary", null, label), $("pre", null, body)); return d; };
+const dot = color => { const d = $("span", "dot"); d.style.background = color; return d; };
+const mins = t => ((t - t0) / 60).toFixed(1);
+const ago = t => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? `${s.toFixed(0)}s` : `${(s / 60).toFixed(0)}m`; };
+const now = () => ended ? tEnd : Date.now() / 1000;
+
+// ---------- agents' feeds (shown in the side panel) ----------
+function onStart(e) {
+  document.getElementById("run").textContent = e.run;
+  document.getElementById("model").textContent = e.config.model;
+  duration = e.config.duration_minutes;
+  e.config.groups.forEach((g, i) => labs[g.name] = { lab: g.lab, color: LAB_COLORS[i % LAB_COLORS.length], subs: 0, files: [], seen: {} });
+  for (const w of e.workers) {
+    const feed = $("div", "feedcol"); feed.style.setProperty("--lab", labs[w.group].color);
+    workers[w.name] = { ...labs[w.group], group: w.group, agent: w.agent, feed, now: "starting", nowT: e.t, subs: 0 };
+    history[w.name] = [];
+  }
+  drawFilesSkeleton();
+}
+
+function add(worker, node) {
+  const f = workers[worker].feed, body = document.getElementById("pbody");
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
+  f.append(node);
+  if (panel?.kind === "agent" && panel.key === worker && atBottom) body.scrollTop = body.scrollHeight;
+}
+
+function doing(cmd) {
+  if (/\/submit/.test(cmd)) return "⇡ submitting";
+  if (/cat\s*>|<<\s*['"]?\w+/.test(cmd) && /\.(py|md|txt|json)/.test(cmd)) return "✎ writing " + (cmd.match(/[\w./-]+\.(py|md|txt|json)/) || [""])[0];
+  if (/python/.test(cmd)) return "▶ running python";
+  return "▶ " + clip(cmd.replace(/\s+/g, " "), 40);
+}
+
+function onEvent(e) {
+  const w = e.worker && workers[e.worker];
+  if (e.ev === "start") return onStart(e);
+  if (e.ev === "agents_start") t0 = e.t;
+  if (e.ev === "time_limit") document.getElementById("state").textContent = "time up, finishing turns";
+  if (e.ev === "end") { ended = true; tEnd = e.t; document.getElementById("state").textContent = "ended"; }
+  if (!w) return;
+  if (e.ev === "prompt") add(e.worker, fold("prompt", `${e.system}\n\n${e.task}`));
+  if (e.ev === "model" || e.ev === "model_error") {
+    for (const m of e.new_messages || []) {
+      if (m.role !== "assistant") continue;
+      const c = $("div", "card say");
+      c.append($("div", "meta", `turn ${e.turn} · ${mins(e.t)} min`));
+      if (m.reasoning_content) c.append(fold(`reasoning: ${clip(m.reasoning_content.trim().replace(/\s+/g, " "), 90)}`, m.reasoning_content));
+      if (m.content) c.append($("pre", null, m.content));
+      add(e.worker, c);
+    }
+    if (e.ev === "model_error") add(e.worker, $("div", "card err", `model error: ${e.error || ""}`));
+  }
+  if (e.ev === "exec_start") {
+    let cmd = e.arguments; try { cmd = JSON.parse(e.arguments).cmd ?? cmd; } catch {}
+    w.now = doing(cmd); w.nowT = e.t;
+  }
+  if (e.ev === "exec") {
+    const c = $("div", e.error ? "card err" : "card cmd");
+    if (e.error) c.append($("div", null, e.error), $("pre", null, e.raw || ""));
+    else {
+      c.append($("div", "meta", `exit ${e.exit} · ${e.secs}s${e.timed_out ? " · timed out" : ""}${e.truncated ? " · truncated" : ""}`));
+      c.append($("pre", null, "$ " + e.cmd));
+      const out = (e.stdout || "") + (e.stderr ? "\n[stderr]\n" + e.stderr : "");
+      if (out.trim()) c.append(fold(`output: ${clip(out.trim().split("\n").pop(), 80)}`, out));
+    }
+    add(e.worker, c);
+    w.now = "… thinking"; w.nowT = e.t;
+  }
+  if (e.ev === "nudge") add(e.worker, $("div", "line", "no tool call → nudged"));
+  if (e.ev === "stop") { add(e.worker, $("div", "line", `stopped: ${e.reason}`)); w.now = "■ stopped"; w.nowT = e.t; }
+}
+
+// ---------- hub: submissions, leaderboard, chart ----------
+function onHub(h) {
+  if (h.ev === "submit_received") subs[h.id] = { received: h };
+  if (h.ev !== "submit") return;
+  const r = h.response, w = workers[h.account];
+  Object.assign(subs[r.id] ??= {}, { response: r, account: h.account, t: h.t });
+  if (w) { w.subs++; labs[w.group].subs++; }
+  if (r.score != null && (!best[h.account] || r.score < best[h.account].score)) {
+    best[h.account] = { score: r.score, id: r.id };
+    history[h.account]?.push([h.t, r.score]);
+  }
+  const s = subs[r.id], row = $("div", "row click");
+  row.onclick = () => openSub(r.id);
+  const who = $("span"); who.append(dot(w?.color || "#888"), `#${r.id} ${h.account}`);
+  row.append($("span", "meta", t0 ? `${mins(h.t)}m` : ""), who, $("span", r.error ? "err" : "num", r.score ?? r.error));
+  if (s.received?.remark) row.append($("span", "remark", clip(s.received.remark, 120)));
+  document.getElementById("feed").prepend(row);
+}
+
+function drawBoard() {
+  const board = document.getElementById("board");
+  const head = $("tr"); ["#", "agent", "lab", "best", "subs", "now"].forEach((h, i) => head.append($("th", i === 3 || i === 4 ? "num" : "", h)));
+  const names = Object.keys(workers).sort((a, b) => (best[a]?.score ?? 1e9) - (best[b]?.score ?? 1e9) || (best[a]?.id ?? 0) - (best[b]?.id ?? 0));
+  const rows = names.map((n, i) => {
+    const w = workers[n], tr = $("tr", "click"), lab = $("td"); tr.onclick = () => openAgent(n);
+    lab.append(dot(w.color), w.lab);
+    tr.append($("td", "meta", best[n] ? i + 1 : "–"), $("td", null, n), lab, $("td", "num", best[n]?.score ?? "–"), $("td", "num", w.subs),
+              $("td", "now", ended ? w.now : `${w.now} · ${ago(w.nowT)}`));
+    return tr;
+  });
+  board.replaceChildren(head, ...rows);
+  document.getElementById("labsubs").replaceChildren(...Object.values(labs).map(l => { const s = $("span"); s.append(dot(l.color), `${l.lab} ${l.subs} subs`); return s; }));
+  if (t0) document.getElementById("clock").textContent = `${mins(now())}${duration ? " / " + duration : ""} min`;
+}
+
+function drawChart() {
+  const svg = document.querySelector("#chart svg"), W = svg.clientWidth, H = 230, L = 52, R = 110, T = 8, B = 22;
+  const pts = Object.values(history).flat();
+  if (!t0 || !pts.length) return svg.replaceChildren();
+  const xmax = Math.max(duration ? duration * 60 : 0, now() - t0), ys = pts.map(p => p[1]);
+  let ylo = Math.min(...ys), yhi = Math.max(...ys); if (yhi - ylo < 4) { ylo -= 2; yhi += 2; }
+  const x = t => L + (t - t0) / xmax * (W - L - R), y = v => T + (v - ylo) / (yhi - ylo) * (H - T - B);  // lower = better = top
+  const ns = "http://www.w3.org/2000/svg", el = (tag, attrs, text) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const kids = [];
+  for (let i = 0; i <= 3; i++) { const v = ylo + (yhi - ylo) * i / 3; kids.push(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "#2b313b" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v.toFixed(1))); }
+  for (let m = 0; m <= xmax / 60; m += Math.max(1, Math.round(xmax / 60 / 6))) kids.push(el("text", { x: x(t0 + m * 60), y: H - 4, "text-anchor": "middle" }, `${m}m`));
+  let lastLabel = -1e9;
+  const order = Object.entries(history).filter(([, h]) => h.length).sort((a, b) => a[1].at(-1)[1] - b[1].at(-1)[1]);
+  for (const [n, h] of order) {
+    const w = workers[n]; let d = `M${x(h[0][0])},${y(h[0][1])}`;
+    for (let i = 1; i < h.length; i++) d += `H${x(h[i][0])}V${y(h[i][1])}`;
+    d += `H${x(now())}`;
+    kids.push(el("path", { d, fill: "none", stroke: w.color, "stroke-width": 2, "stroke-dasharray": w.agent % 2 ? "5 3" : "" }));
+    for (const [t, v] of h) { const c = el("circle", { cx: x(t), cy: y(v), r: 4, fill: w.color, stroke: "#181b21", "stroke-width": 2 }); c.append(el("title", {}, `${n} · ${v} bins · ${mins(t)} min`)); kids.push(c); }
+    lastLabel = Math.max(y(h.at(-1)[1]) + 4, lastLabel + 13);  // stack labels of equal scores
+    kids.push(el("text", { x: W - R + 6, y: lastLabel }, n));
+  }
+  svg.replaceChildren(...kids);
+}
+
+// ---------- shared drives ----------
+function drawFilesSkeleton() {
+  document.getElementById("files").replaceChildren(...Object.entries(labs).map(([g, l]) => {
+    const box = $("div"), head = $("div", "labhead", `${l.lab}`); head.style.setProperty("--lab", l.color);
+    l.list = $("div"); box.append(head, l.list); return box;
+  }));
+}
+
+async function pollFiles() {
+  for (const [g, l] of Object.entries(labs)) {
+    let files = await (await fetch(`/team?group=${g}`)).json();
+    files = files.filter(f => !f.path.includes("__pycache__/")).sort((a, b) => a.path.localeCompare(b.path));
+    l.list.replaceChildren(...(files.length ? files.map(f => {
+      const fresh = !ended && Date.now() / 1000 - f.mtime < 30, row = $("div", "file click" + (fresh ? " fresh" : ""));
+      row.onclick = () => openFile(g, f.path);
+      row.append($("span", null, f.path), $("span", "meta", `${(f.size / 1024).toFixed(1)}k${ended ? "" : " · " + ago(f.mtime)}`));
+      return row;
+    }) : [$("div", "meta", "empty")]));
+  }
+}
+
+// ---------- side panel ----------
+function openPanel(kind, key, title, sub, body) {
+  panel = { kind, key }; document.getElementById("ptitle").textContent = title; document.getElementById("psub").textContent = sub;
+  const b = document.getElementById("pbody"); b.replaceChildren(body); document.getElementById("panel").classList.add("open");
+  return b;
+}
+function closePanel() { panel = null; document.getElementById("panel").classList.remove("open"); }
+function openAgent(n) { const w = workers[n]; const b = openPanel("agent", n, n, `${w.lab} · agent ${w.agent}`, w.feed); b.scrollTop = b.scrollHeight; }
+function openSub(id) {
+  const s = subs[id], r = s.response, box = $("div");
+  box.append($("div", "meta", `${s.account} · ${mins(s.t)} min · ${r.score != null ? r.score + " bins, rank " + r.rank : r.error}`));
+  if (s.received?.remark) box.append($("p", null, s.received.remark));
+  box.append($("pre", null, s.received?.program || ""));
+  openPanel("sub", id, `Submission #${id}`, "", box);
+}
+async function openFile(g, path) {
+  const text = await (await fetch(`/file?group=${g}&path=${encodeURIComponent(path)}`)).text();
+  if (panel?.kind === "file" && panel.key === g + "/" + path) { document.querySelector("#pbody pre").textContent = text; return; }
+  openPanel("file", g + "/" + path, path, labs[g].lab + " /team", $("pre", null, text));
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePanel(); });
+
+// ---------- polling ----------
+async function poll(name, handle) {
+  const buf = await (await fetch(`/${name}?from=${offsets[name]}`)).arrayBuffer();
+  offsets[name] += buf.byteLength;
+  for (const line of new TextDecoder().decode(buf).split("\n")) if (line) handle(JSON.parse(line));
+}
+async function tick() {
+  try { await poll("events", onEvent); await poll("hub", onHub); drawBoard(); drawChart(); }
+  catch (err) { document.getElementById("state").textContent = "viewer offline"; }
+  setTimeout(tick, 1500);
+}
+async function fileTick() {
+  try { await pollFiles(); if (panel?.kind === "file") { const [g, ...p] = panel.key.split("/"); await openFile(g, p.join("/")); } } catch (err) {}
+  setTimeout(fileTick, ended ? 30000 : 3000);
+}
+tick(); setTimeout(fileTick, 500);
+</script>
+</body>
+</html>
