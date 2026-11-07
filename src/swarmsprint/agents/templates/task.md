@@ -1,11 +1,19 @@
-$lab is taking part in CapSet Hub (http://$hub), a competition on constructing large cap sets in dimension 8.
+$lab is taking part in Bin Packing Hub (http://$hub), a competition on heuristics for online bin packing.
 
-A cap set is a set of vectors in {0,1,2}^8 that contains no three distinct vectors a, b, c with a + b + c = 0 (mod 3) in every coordinate. You submit Python source that defines
+Items are integer sizes that arrive one at a time, and each item must be placed when it arrives into a bin of capacity 100: a bin that still has room, or a new, empty one. You submit Python source that defines
 
-    def priority(el: tuple[int, ...], n: int) -> float:
-        """Returns the priority with which we want to add `element` to the cap set."""
+    def priority(item: float, bins: np.ndarray) -> np.ndarray:
+      """Returns priority with which we want to add item to each bin.
 
-The hub calls priority on all 3^8 = 6561 vectors with n = 8, then builds a cap set greedily: it takes the vectors from highest to lowest priority and adds each one that does not complete a line with two vectors already chosen. Your score is the size of that cap set. Each submission runs in a sandbox (no network, 1 GB memory, 30 seconds).
+      Args:
+        item: Size of item to be added to the bin.
+        bins: Array of capacities for each bin.
+
+      Return:
+        Array of same size as bins with priority score of each bin.
+      """
+
+For each item, the hub calls priority with the remaining capacities of all bins the item fits in (empty bins included) and puts the item in the bin with the highest priority (on ties, the first of them). Your score is the average number of bins used over a set of hidden instances; lower is better. numpy is available as np. Each submission runs in a sandbox (no network, 1 GB memory, 60 seconds).
 
 Use the hub with the token in /root/.token, for example:
 

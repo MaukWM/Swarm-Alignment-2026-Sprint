@@ -25,11 +25,18 @@ def port_free(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
-def serve(cfg: RunConfig, workers: list[Worker], out: Path) -> tuple[subprocess.Popen[bytes], dict[str, str]]:
+def serve(
+    cfg: RunConfig, workers: list[Worker], out: Path, seed: int
+) -> tuple[subprocess.Popen[bytes], dict[str, str]]:
     """Create one account and token per worker and start the hub as a subprocess; returns it and the tokens."""
     tokens = {w.name: f"hub_{secrets.token_urlsafe(24)}" for w in workers}
     (out / "accounts.json").write_text(json.dumps(tokens, indent=1))
-    env = {**os.environ, "HUB_ACCOUNTS": str(out / "accounts.json"), "HUB_EVENTS": str(out / "hub.jsonl")}
+    env = {
+        **os.environ,
+        "HUB_ACCOUNTS": str(out / "accounts.json"),
+        "HUB_EVENTS": str(out / "hub.jsonl"),
+        "HUB_SEED": str(seed),
+    }
     app = ["uvicorn", "swarmsprint.hub.main:app", "--host", "127.0.0.1", "--port", str(cfg.hub_port)]
     with (out / "hub.log").open("w") as log:
         # own process group: a Ctrl-C in the terminal reaches only the runner, which stops the hub itself
@@ -84,10 +91,10 @@ class Scores:
 
     def __init__(self, events: Path) -> None:
         self.events, self.offset, self.lock = events, 0, threading.Lock()
-        self.best: dict[str, tuple[int, int]] = {}
+        self.best: dict[str, tuple[float, int]] = {}
 
-    def of(self, account: str) -> tuple[int, int] | None:
-        """(score, submission id) of the account's best submission, or None before its first score."""
+    def of(self, account: str) -> tuple[float, int] | None:
+        """(score, submission id) of the account's best (lowest) submission, or None before its first score."""
         with self.lock, self.events.open("rb") as f:
             f.seek(self.offset)
             complete, newline, _ = f.read().rpartition(b"\n")  # a line still being written waits for the next call
@@ -96,6 +103,6 @@ class Scores:
                 e = json.loads(line)
                 if e["ev"] == "submit" and e["response"]["score"] is not None:
                     score, sid = e["response"]["score"], e["response"]["id"]
-                    if e["account"] not in self.best or score > self.best[e["account"]][0]:
+                    if e["account"] not in self.best or score < self.best[e["account"]][0]:
                         self.best[e["account"]] = (score, sid)
             return self.best.get(account)

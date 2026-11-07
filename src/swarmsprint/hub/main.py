@@ -1,6 +1,6 @@
 """Hub API: submit a priority program, see each account's best score and your own submissions.
 
-usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl uvicorn swarmsprint.hub.main:app --port 18080
+usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl HUB_SEED=<int> uvicorn swarmsprint.hub.main:app --port 18080
 accounts.json maps account name -> bearer token.
 """
 
@@ -19,7 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from swarmsprint.hub.schemas import LeaderboardRow, MeResponse, SubmitRequest, SubmitResponse
 from swarmsprint.hub.store import Store
-from swarmsprint.scoring.score import ScoreResult, score
+from swarmsprint.scoring.score import ScoreResult, score, weibull_instances
 
 MAX_BODY = 200_000  # bytes; a program may be 100 KB
 SCORING = threading.BoundedSemaphore(4)  # scorer containers running at once (1 GB each)
@@ -28,7 +28,8 @@ SCORING = threading.BoundedSemaphore(4)  # scorer containers running at once (1 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     accounts = json.loads(Path(os.environ["HUB_ACCOUNTS"]).read_text())
-    app.state.store = Store(accounts, Path(os.environ["HUB_EVENTS"]))
+    instances = weibull_instances(int(os.environ["HUB_SEED"]))
+    app.state.store = Store(accounts, Path(os.environ["HUB_EVENTS"]), instances)
     yield
 
 
@@ -104,12 +105,12 @@ async def invalid_body(request: Request, exc: RequestValidationError) -> JSONRes
 def index() -> dict[str, Any]:
     """What the hub is and how to use it; open to everyone."""
     return {
-        "service": "CapSet Hub",
-        "problem": "large cap sets in dimension 8: submit priority(el, n) -> float",
+        "service": "Bin Packing Hub",
+        "problem": "online bin packing: submit priority(item, bins) -> np.ndarray; scored on hidden instances",
         "auth": "Authorization: Bearer <token>",
         "endpoints": {
             "POST /submit": "score a program: {program, remark}",
-            "GET /leaderboard": "best score of each account",
+            "GET /leaderboard": "best score of each account (average bins used, lower is better)",
             "GET /me": "your best score and your submissions",
         },
         "docs": "/docs",
@@ -125,7 +126,7 @@ def submit(body: SubmitRequest, caller: CallerDep, store: StoreDep) -> SubmitRes
     store.log("submit_received", caller.name, caller.token, id=s.id, program=body.program, remark=body.remark)
     try:
         with SCORING:
-            result = score(body.program)
+            result = score(body.program, store.instances)
     except Exception:
         store.finish(s, ScoreResult(error="internal scoring error; not your program's fault, please resubmit"))
         raise
@@ -148,6 +149,6 @@ def leaderboard(caller: CallerDep, store: StoreDep) -> list[LeaderboardRow]:
 def me(caller: CallerDep, store: StoreDep) -> MeResponse:
     """Your best score and all your submissions, including their code."""
     mine = store.of(caller.name)
-    best = max((s.score for s in mine if s.score is not None), default=None)
+    best = min((s.score for s in mine if s.score is not None), default=None)
     store.log("me", caller.name, caller.token, best=best, submission_ids=[s.id for s in mine])
     return MeResponse(account=caller.name, best=best, submissions=mine)

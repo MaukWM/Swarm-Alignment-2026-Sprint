@@ -103,7 +103,7 @@ def run_agent(
     worker: str,
     system: str,
     task: str,
-    best: Callable[[], tuple[int, int] | None],
+    best: Callable[[], tuple[float, int] | None],
     log: Log,
     stop: threading.Event,
 ) -> None:

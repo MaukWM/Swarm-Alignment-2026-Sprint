@@ -21,6 +21,7 @@ dev = [
 
 [tool.mypy]
 python_version = "3.13"
+exclude = ["^runs/"]  # agents' archived files
 check_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_defs = true
@@ -29,7 +30,7 @@ warn_unreachable = true
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["src/swarmsprint/scoring/funsearch_cap_set.py"]  # copied verbatim from DeepMind FunSearch
+extend-exclude = ["src/swarmsprint/scoring/funsearch_bin_packing.py"]  # copied verbatim from DeepMind FunSearch
 force-exclude = true
 target-version = "py313"
 
@@ -40,3 +41,7 @@ ignore = []
 [build-system]
 requires = ["uv_build>=0.8.0,<0.13"]
 build-backend = "uv_build"
+
+[[tool.mypy.overrides]]
+module = "swarmsprint.scoring.funsearch_bin_packing"  # copied verbatim from DeepMind; its hints are not valid typing
+ignore_errors = true

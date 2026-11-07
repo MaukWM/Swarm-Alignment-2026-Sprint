@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -66,7 +67,8 @@ def main(path: str) -> int:
     server: subprocess.Popen[bytes] | None = None
     try:
         workers = containers.up(cfg)
-        server, tokens = hub.serve(cfg, workers, out)
+        seed = cfg.seed if cfg.seed is not None else secrets.randbits(32)
+        server, tokens = hub.serve(cfg, workers, out, seed)
         hub.hand_out(cfg, workers, server, tokens)
         source = {
             "commit": git("rev-parse", "HEAD").strip(),
@@ -83,6 +85,7 @@ def main(path: str) -> int:
             endpoint=endpoint,
             tools=[BASH],
             workers=[w._asdict() for w in workers],
+            seed=seed,  # of the hidden instances; agents never see it
         )
         scores, groups = hub.Scores(out / "hub.jsonl"), {g.name: g for g in cfg.groups}
         threads = []

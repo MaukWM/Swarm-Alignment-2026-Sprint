@@ -1,1 +1,1 @@
-"""Scoring of priority programs with DeepMind's cap-set evaluator in throwaway containers."""
+"""Scoring of bin-packing heuristics on hidden instances, with DeepMind's FunSearch code, in throwaway containers."""

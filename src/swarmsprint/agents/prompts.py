@@ -12,6 +12,10 @@ def render(name: str, **values: str | int) -> str:
     return Template((TEMPLATES / f"{name}.md").read_text().rstrip("\n")).substitute(values)
 
 
-def status(best: tuple[int, int] | None) -> str:
+def status(best: tuple[float, int] | None) -> str:
     """The line shown after every turn: the agent's best score and which submission it was."""
-    return f"Your best score: {best[0]} (submission {best[1]})." if best else "Your best score: none yet."
+    return (
+        f"Your best score: {best[0]} bins (submission {best[1]}); lower is better."
+        if best
+        else "Your best score: none yet."
+    )

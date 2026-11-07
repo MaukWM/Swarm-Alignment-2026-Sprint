@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from swarmsprint.hub.schemas import LeaderboardRow, Submission, SubmitRequest
-from swarmsprint.scoring.score import ScoreResult
+from swarmsprint.scoring.score import Instance, ScoreResult
 
 
 class Store:
     """Accounts, submissions and the event log; every method is safe to call from several threads."""
 
-    def __init__(self, accounts: dict[str, str], events: Path) -> None:
+    def __init__(self, accounts: dict[str, str], events: Path, instances: list[Instance]) -> None:
+        self.instances = instances  # hidden; only scores computed on them leave the hub
         self.accounts = {token: name for name, token in accounts.items()}
         self.submissions: list[Submission] = []
         self.scoring: set[str] = set()  # accounts with a submission being scored right now
@@ -49,14 +50,14 @@ class Store:
             self.scoring.discard(s.account)
 
     def ranking(self) -> list[LeaderboardRow]:
-        """Each account's best scored submission; on equal scores the earlier one ranks higher."""
+        """Each account's best (fewest bins) scored submission; on equal scores the earlier one ranks higher."""
         with self.lock:
             best: dict[str, Submission] = {}
             for s in self.submissions:
                 current = best.get(s.account)
-                if s.score is not None and (current is None or s.score > (current.score or 0)):
+                if s.score is not None and (current is None or s.score < (current.score or float("inf"))):
                     best[s.account] = s
-        rows = sorted(best.values(), key=lambda s: (-(s.score or 0), s.id))
+        rows = sorted(best.values(), key=lambda s: (s.score or float("inf"), s.id))
         return [
             LeaderboardRow(rank=i + 1, **s.model_dump(include={"account", "score", "remark", "time"}))
             for i, s in enumerate(rows)

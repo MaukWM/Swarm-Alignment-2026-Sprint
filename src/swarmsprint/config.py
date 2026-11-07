@@ -29,8 +29,9 @@ class RunConfig(BaseModel):
     duration_minutes: float | None = Field(default=None, gt=0, description="wall-clock length of the run")
     cmd_timeout: int = Field(default=60, gt=0, description="seconds per shell command")
     max_output: int = Field(default=4000, gt=0, description="characters of command output the model sees")
+    seed: int | None = Field(default=None, description="seed of the hidden instances; random (and logged) if unset")
     api: Literal["chat", "responses"] = Field(default="chat", description="responses: OpenAI reasoning models")
-    hub_host: str = Field(default="capset-hub.org", description="hostname agents use, port 80")
+    hub_host: str = Field(default="binpacking-hub.org", description="hostname agents use, port 80")
     hub_port: int = Field(default=18080, gt=0, lt=65536, description="port of the hub on the host")
 
     @model_validator(mode="after")
