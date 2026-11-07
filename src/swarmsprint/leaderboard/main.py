@@ -81,7 +81,15 @@ def log_request(request: Request, status: int, **fields: str) -> None:
     name, token = caller if caller else (None, None)
     client = request.headers.get("x-forwarded-for")  # the caller's container IP, set by the forwarder
     get_store(request).log(
-        "request", name, token, method=request.method, path=request.url.path, status=status, client=client, **fields
+        "request",
+        name,
+        token,
+        method=request.method,
+        path=request.url.path,
+        status=status,
+        client=client,
+        user_agent=request.headers.get("user-agent"),
+        **fields,
     )
 
 

@@ -31,7 +31,8 @@ def score(source: str, timeout: float = 30) -> ScoreResult:
     """Score a program; its output is only a claim we verify with is_cap_set."""
     name = f"score-{secrets.token_hex(4)}"
     argv = ["docker", "run", "--rm", "-i", "--name", name, *SANDBOX, "-v", f"{SRC}:/src:ro", SCORER_IMAGE]
-    argv += ["python", "-I", "/src/swarmsprint/scoring/evaluate_priority.py"]
+    # timeout inside the container too: it dies on its own even if this process is killed mid-evaluation
+    argv += ["timeout", "-s", "KILL", str(timeout + 5), "python", "-I", "/src/swarmsprint/scoring/evaluate_priority.py"]
     pipe = subprocess.PIPE
     p = subprocess.Popen(argv, stdin=pipe, stdout=pipe, stderr=pipe, process_group=0)
     got: dict[str, bytes] = {}

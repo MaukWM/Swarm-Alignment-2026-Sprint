@@ -20,6 +20,7 @@ from swarmsprint.agents.loop import BASH, Log, run_agent
 from swarmsprint.config import RunConfig, load
 from swarmsprint.infra import containers
 from swarmsprint.infra.docker import docker
+from swarmsprint.runner import leaderboard
 
 ARCHIVE_CAP = 300 * 2**20  # bytes per /team tar; the drive holds 256 MB but sparse files can expand
 
@@ -45,6 +46,8 @@ def main(path: str) -> int:
     cfg = load(path)
     if left := containers.existing(cfg):
         sys.exit(f"run {cfg.name!r} still has docker resources {left}; inspect them, then `containers down`")
+    if not leaderboard.port_free(cfg.leaderboard_port):
+        sys.exit(f"port {cfg.leaderboard_port} is in use; the leaderboard needs it (config: leaderboard_port)")
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGHUP, interrupt)
     out = Path("runs") / f"{cfg.name}-{time.strftime('%Y%m%d-%H%M%S')}"
@@ -59,8 +62,11 @@ def main(path: str) -> int:
             f.flush()
 
     stop, failed, workers = threading.Event(), list[str](), list[containers.Worker]()
+    server: subprocess.Popen[bytes] | None = None
     try:
         workers = containers.up(cfg)
+        server, tokens = leaderboard.serve(cfg, workers, out)
+        leaderboard.hand_out(cfg, workers, server, tokens)
         source = {
             "commit": git("rev-parse", "HEAD").strip(),
             "status": git("status", "--porcelain"),
@@ -82,6 +88,7 @@ def main(path: str) -> int:
         for w in workers:
             args = (cfg, w.name, w.group, w.agent, prompts[w.group], log, stop, failed)
             threads.append(threading.Thread(target=drive, args=args, daemon=True))
+        log("agents_start")  # leaderboard events before this moment are the runner's own setup and checks
         for t in threads:
             t.start()
         try:
@@ -98,6 +105,8 @@ def main(path: str) -> int:
         raise
     finally:
         ignore_signals()  # a second signal must not break the cleanup
+        if server and (died := leaderboard.stop(server)) is not None:
+            failed.append(f"leaderboard exited during the run with code {died}")
         archived = all(archive(cfg, workers, out, log))
         if archived:
             containers.down(cfg)
