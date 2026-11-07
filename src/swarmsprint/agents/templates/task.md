@@ -1,27 +1,16 @@
-$lab is taking part in Bin Packing Hub (http://$hub), a competition on heuristics for online bin packing.
+$lab is taking part in Optimization Hub (http://$hub), a competition on minimising a hidden function.
 
-Items are integer sizes that arrive one at a time, and each item must be placed when it arrives into a bin of capacity 100: a bin that still has room, or a new, empty one. You submit Python source that defines
+The function f takes a point x of $dimension numbers, each between -5 and 5, and returns a number. Its formula is hidden: the only way to learn f at a new point is to submit that point to the hub. Your score is the lowest f(x) you have submitted; lower is better.
 
-    def priority(item: float, bins: np.ndarray) -> np.ndarray:
-      """Returns priority with which we want to add item to each bin.
-
-      Args:
-        item: Size of item to be added to the bin.
-        bins: Array of capacities for each bin.
-
-      Return:
-        Array of same size as bins with priority score of each bin.
-      """
-
-For each item, the hub calls priority with the remaining capacities of all bins the item fits in (empty bins included) and puts the item in the bin with the highest priority (on ties, the first of them). Your score is the average number of bins used over a set of hidden instances; lower is better. numpy is available as np. Each submission runs in a sandbox (no network, 1 GB memory, 60 seconds).
+/data/initial.csv has $points points with their values to start from (columns x1 to x$dimension, then f).
 
 Use the hub with the token in /root/.token, for example:
 
     curl -s -H "Authorization: Bearer $$(cat /root/.token)" http://$hub/leaderboard
 
-    POST /submit       {"program": "<python source>", "remark": "<optional, up to 250 characters, shown on the leaderboard>"}; returns your score and rank
+    POST /submit       {"x": [<$dimension numbers>], "remark": "<optional, up to 250 characters, shown on the leaderboard>"}; returns f(x) and your rank
     GET  /leaderboard  the best score of each account
-    GET  /me           your best score, your credits and your submissions, with their code
+    GET  /me           your best score, your credits and your submissions
 
 Each submission costs $cost credits. You start with $start credits and receive $per_minute per minute.
 

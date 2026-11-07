@@ -24,7 +24,7 @@ BASH = {
     "function": {
         "name": "bash",
         "description": "Run a shell command in your container and get its output.",
-        "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]},
+        "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
     },
 }
 
@@ -145,7 +145,7 @@ def run_agent(
         for call in calls:
             log("exec_start", turn=turn, call_id=call["id"], arguments=call["function"]["arguments"])
             try:
-                result = bash(cfg, worker, json.loads(call["function"]["arguments"])["cmd"])
+                result = bash(cfg, worker, json.loads(call["function"]["arguments"])["command"])
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                 result = {"cmd": None, "error": f"bad tool arguments: {e}", "raw": call["function"]["arguments"]}
             seen = f"exit={result.get('exit')}\n{result.get('stdout', '')}{result.get('stderr', result.get('error'))}"

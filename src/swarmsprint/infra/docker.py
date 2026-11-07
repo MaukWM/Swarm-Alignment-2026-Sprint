@@ -1,4 +1,4 @@
-"""Docker CLI helpers shared by the worker containers, the agent loop and the scorer."""
+"""Docker CLI helpers shared by the worker containers and the agent loop."""
 
 import subprocess
 from typing import Any

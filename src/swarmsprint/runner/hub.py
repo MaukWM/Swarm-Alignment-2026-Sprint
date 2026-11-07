@@ -36,6 +36,8 @@ def serve(
         "HUB_ACCOUNTS": str(out / "accounts.json"),
         "HUB_EVENTS": str(out / "hub.jsonl"),
         "HUB_SEED": str(seed),
+        "HUB_FUNCTION": str(cfg.function),
+        "HUB_DIMENSION": str(cfg.dimension),
         "HUB_CREDITS": json.dumps(
             {
                 "start": cfg.credits_start,
@@ -71,7 +73,7 @@ def stop(server: subprocess.Popen[bytes]) -> int | None:
     server.terminate()
     try:
         server.wait(timeout=10)
-    except subprocess.TimeoutExpired:  # uvicorn waits for open requests, e.g. a submission still being scored
+    except subprocess.TimeoutExpired:  # uvicorn waits for open requests
         server.kill()
         server.wait()
     return died
@@ -108,7 +110,7 @@ class Scores:
             self.offset += len(complete) + len(newline)
             for line in complete.split(b"\n") if newline else []:
                 e = json.loads(line)
-                if e["ev"] == "submit" and e["response"]["score"] is not None:
+                if e["ev"] == "submit":
                     score, sid = e["response"]["score"], e["response"]["id"]
                     if e["account"] not in self.best or score < self.best[e["account"]][0]:
                         self.best[e["account"]] = (score, sid)

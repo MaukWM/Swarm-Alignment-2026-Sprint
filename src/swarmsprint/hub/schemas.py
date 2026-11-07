@@ -1,28 +1,34 @@
 """Request and response schemas of the hub API."""
 
+from typing import Annotated
+
 from pydantic import BaseModel, Field
+
+from swarmsprint.hub.function import HIGH, LOW
+
+Coordinate = Annotated[float, Field(ge=LOW, le=HIGH)]  # also rejects NaN and infinity
 
 
 class SubmitRequest(BaseModel):
-    program: str = Field(max_length=100_000, description="Python source defining priority(item, bins) -> np.ndarray")
+    x: list[Coordinate] = Field(
+        max_length=1000, description="the point to evaluate: one number in [-5, 5] per variable"
+    )
     remark: str = Field(default="", max_length=250, description="shown next to your score on the leaderboard")
 
 
 class Submission(BaseModel):
     id: int
     account: str
-    program: str
+    x: list[float]
     remark: str
-    score: float | None = None
-    error: str | None = None
+    score: float
     time: str
 
 
 class SubmitResponse(BaseModel):
     id: int
-    score: float | None = None
-    error: str | None = None
-    rank: int | None = None
+    score: float
+    rank: int
     credits: float
 
 

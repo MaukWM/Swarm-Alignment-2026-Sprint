@@ -17,9 +17,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from swarmsprint.agents.loop import BASH, Log, run_agent
 from swarmsprint.agents.prompts import render
 from swarmsprint.config import Group, RunConfig, load
+from swarmsprint.hub.function import HIGH, LOW, Function
 from swarmsprint.infra import containers
 from swarmsprint.infra.docker import docker
 from swarmsprint.runner import hub
@@ -42,6 +45,18 @@ def interrupt(signum: int, frame: Any) -> None:
 def git(*args: str) -> str:
     """Return the output of a git command in the current repo."""
     return subprocess.run(["git", *args], capture_output=True, text=True).stdout
+
+
+def write_data(cfg: RunConfig, seed: int, out: Path) -> Path:
+    """Each group's starting knowledge in data/<group>/initial.csv: random points and their values, new per group."""
+    function = Function(cfg.function, cfg.dimension, seed)
+    header = ",".join([f"x{j + 1}" for j in range(cfg.dimension)] + ["f"])
+    for i, group in enumerate(cfg.groups):
+        points = np.random.default_rng([seed, i]).uniform(LOW, HIGH, (cfg.initial_points, cfg.dimension))
+        rows = [[*p, function(p.tolist())] for p in points]
+        (out / "data" / group.name).mkdir(parents=True)
+        np.savetxt(out / "data" / group.name / "initial.csv", rows, "%.10g", ",", header=header, comments="")
+    return out / "data"
 
 
 def main(path: str) -> int:
@@ -68,8 +83,19 @@ def main(path: str) -> int:
     stop, failed, workers = threading.Event(), list[str](), list[containers.Worker]()
     server: subprocess.Popen[bytes] | None = None
     try:
+        seed = cfg.seed if cfg.seed is not None else secrets.randbits(31) + 1
+        data = write_data(cfg, seed, out)
         workers = containers.up(cfg)
-        seed = cfg.seed if cfg.seed is not None else secrets.randbits(32)
+        for w in workers:
+            docker(
+                "exec",
+                "-i",
+                w.name,
+                "sh",
+                "-c",
+                "cat > /data/initial.csv",
+                stdin=(data / w.group / "initial.csv").read_text(),
+            )
         server, tokens = hub.serve(cfg, workers, out, seed)
         hub.hand_out(cfg, workers, server, tokens)
         source = {
@@ -87,7 +113,7 @@ def main(path: str) -> int:
             endpoint=endpoint,
             tools=[BASH],
             workers=[w._asdict() for w in workers],
-            seed=seed,  # of the hidden instances; agents never see it
+            seed=seed,  # of the hidden function; agents never see it
         )
         scores, groups = hub.Scores(out / "hub.jsonl"), {g.name: g for g in cfg.groups}
         threads = []
@@ -202,12 +228,14 @@ def drive(
         log(ev, worker=w.name, group=w.group, agent=w.agent, **fields)
 
     try:
-        system = render("system", worker=w.name, lab=group.lab)
+        system = render("system", worker=w.name, lab=group.lab, timeout=cfg.cmd_timeout)
         task = render(
             "task",
             lab=group.lab,
             hub=cfg.hub_host,
             n=group.agents,
+            dimension=cfg.dimension,
+            points=cfg.initial_points,
             start=f"{cfg.credits_start:g}",
             per_minute=f"{cfg.credits_per_minute:g}",
             cost=f"{cfg.credits_per_submission:g}",
