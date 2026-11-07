@@ -1,6 +1,6 @@
 name = "smoke"
 model = "qwen3.8-flash-next"
-turns = 20
+duration_minutes = 15
 
 [[groups]]
 name = "ducks"
