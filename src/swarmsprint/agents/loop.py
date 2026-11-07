@@ -11,9 +11,9 @@ from collections.abc import Callable
 from typing import Any
 
 from swarmsprint.config import RunConfig
+from swarmsprint.infra.docker import CAP, read_capped
 
 Log = Callable[..., None]
-CAP = 1_000_000
 BASH = {
     "type": "function",
     "function": {
@@ -58,13 +58,6 @@ def bash(cfg: RunConfig, worker: str, cmd: str) -> dict[str, Any]:
     secs = round(time.time() - start, 3)
     text = {k: v.decode(errors="replace") for k, v in got.items()}
     return {"cmd": cmd, "exit": p.returncode, **text, "secs": secs, "timed_out": secs >= cfg.cmd_timeout}
-
-
-def read_capped(stream: Any, key: str, into: dict[str, bytes]) -> None:
-    """Keep the first CAP bytes of a pipe and discard the rest, so docker exec still reports the exit code."""
-    into[key] = stream.read(CAP)
-    while stream.read(2**20):
-        pass
 
 
 def run_agent(cfg: RunConfig, worker: str, prompt: str, log: Log, stop: threading.Event) -> None:

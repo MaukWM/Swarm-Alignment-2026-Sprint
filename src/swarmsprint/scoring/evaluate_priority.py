@@ -4,8 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
-from swarmsprint import funsearch_cap_set as fs  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from swarmsprint.scoring import funsearch_cap_set as fs  # noqa: E402
 
 out, sys.stdout = sys.stdout, sys.stderr  # prints from the program must not reach the result
 del fs.priority  # DeepMind's placeholder; the agent must define its own

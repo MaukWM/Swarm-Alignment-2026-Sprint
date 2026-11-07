@@ -1,6 +1,6 @@
 """Run one experiment: start the containers, drive every agent in parallel, archive /team drives, tear down.
 
-usage: python -m swarmsprint.run experiments/<config>.toml   (writes runs/<name>-<timestamp>/)
+usage: python -m swarmsprint.runner.run experiments/<config>.toml   (writes runs/<name>-<timestamp>/)
 """
 
 import contextlib
@@ -16,9 +16,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from swarmsprint import containers
-from swarmsprint.agent import BASH, Log, run_agent
+from swarmsprint.agents.loop import BASH, Log, run_agent
 from swarmsprint.config import RunConfig, load
+from swarmsprint.infra import containers
+from swarmsprint.infra.docker import docker
 
 ARCHIVE_CAP = 300 * 2**20  # bytes per /team tar; the drive holds 256 MB but sparse files can expand
 
@@ -65,7 +66,7 @@ def main(path: str) -> int:
             "status": git("status", "--porcelain"),
             "diff": git("diff", "HEAD"),
         }
-        image = containers.docker("image", "inspect", containers.IMAGE, "--format", "{{.Id}}")
+        image = docker("image", "inspect", containers.IMAGE, "--format", "{{.Id}}")
         endpoint = os.environ["LLM_BASE_URL"]
         log(
             "start",
@@ -110,7 +111,7 @@ def archive(cfg: RunConfig, workers: list[tuple[str, str, int]], out: Path, log:
     """Freeze all workers, then archive each group's /team; one result per group."""
     for w, _, _ in workers:
         with contextlib.suppress(subprocess.CalledProcessError):  # already exited or paused: nothing to freeze
-            containers.docker("pause", w)
+            docker("pause", w)
     return [archive_group(cfg, g.name, out, log) for g in cfg.groups] if workers else []
 
 
@@ -119,7 +120,7 @@ def archive_group(cfg: RunConfig, group: str, out: Path, log: Log) -> bool:
     tar, digest, size = out / f"team-{group}.tar", hashlib.sha256(), 0
     try:
         labels = [f"label=swarmsprint.run={cfg.name}", f"label=swarmsprint.group={group}", "label=swarmsprint.keeper=1"]
-        keeper = containers.docker("ps", "-q", *(a for lbl in labels for a in ("--filter", lbl)))
+        keeper = docker("ps", "-q", *(a for lbl in labels for a in ("--filter", lbl)))
         p = subprocess.Popen(["docker", "cp", f"{keeper}:/team", "-"], stdout=subprocess.PIPE, process_group=0)
         assert p.stdout is not None
         with tar.open("wb") as f:

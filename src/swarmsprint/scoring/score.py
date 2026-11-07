@@ -9,11 +9,11 @@ from pathlib import Path
 
 import numpy as np
 
-from swarmsprint import funsearch_cap_set as fs
-from swarmsprint.agent import read_capped
-from swarmsprint.containers import SCORER_IMAGE
+from swarmsprint.infra.containers import SCORER_IMAGE
+from swarmsprint.infra.docker import read_capped
+from swarmsprint.scoring import funsearch_cap_set as fs
 
-SRC = Path(__file__).resolve().parents[1]  # mounted read-only: evaluate_priority.py and DeepMind's code
+SRC = Path(__file__).resolve().parents[2]  # mounted read-only: evaluate_priority.py and DeepMind's code
 SANDBOX = ["--network", "none", "--read-only", "--tmpfs", "/tmp:size=16m", "--user", "65534:65534"]
 SANDBOX += ["--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limit", "64"]
 SANDBOX += ["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-e", "OPENBLAS_NUM_THREADS=1"]
@@ -23,7 +23,7 @@ def score(source: str, timeout: float = 30) -> dict[str, int | str]:
     """Return {"score": cap set size} or {"error": reason}; the program's output is only a claim we verify."""
     name = f"score-{secrets.token_hex(4)}"
     argv = ["docker", "run", "--rm", "-i", "--name", name, *SANDBOX, "-v", f"{SRC}:/src:ro", SCORER_IMAGE]
-    argv += ["python", "-I", "/src/swarmsprint/evaluate_priority.py"]
+    argv += ["python", "-I", "/src/swarmsprint/scoring/evaluate_priority.py"]
     pipe = subprocess.PIPE
     p = subprocess.Popen(argv, stdin=pipe, stdout=pipe, stderr=pipe, process_group=0)
     got: dict[str, bytes] = {}

@@ -3,18 +3,18 @@
 Every name an agent can see (container, hostname, network, drive) is random; run, group and agent index live in
 docker labels, which are not visible from inside a container.
 
-usage: python -m swarmsprint.containers {up,down} experiments/<config>.toml
+usage: python -m swarmsprint.infra.containers {up,down} experiments/<config>.toml
 """
 
 import secrets
-import subprocess
 import sys
 from pathlib import Path
 
 from swarmsprint.config import RunConfig, load
+from swarmsprint.infra.docker import docker
 
 IMAGE, SCORER_IMAGE = "swarmsprint-agent", "swarmsprint-scorer"
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 LIMITS = ["--pids-limit", "256", "--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--init"]
 LIMITS += ["--ulimit", "nofile=1024:1024", "--ulimit", "core=0:0"]
 HARDEN = ["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only"]
@@ -26,13 +26,6 @@ RESOURCES = [
     (["network", "ls", "-q"], ["network", "rm"]),
     (["volume", "ls", "-q"], ["volume", "rm"]),
 ]
-
-
-def docker(*args: str, stdin: str | None = None) -> str:
-    """Run a docker command and return its stdout; docker's own error text goes to stderr."""
-    # own process group: a Ctrl-C in the terminal must not kill docker mid-teardown
-    p = subprocess.run(["docker", *args], input=stdin, check=True, stdout=subprocess.PIPE, text=True, process_group=0)
-    return p.stdout.strip()
 
 
 def up(cfg: RunConfig) -> list[tuple[str, str, int]]:

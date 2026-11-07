@@ -27,7 +27,7 @@ warn_unreachable = true
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["src/swarmsprint/funsearch_cap_set.py"]  # copied verbatim from DeepMind FunSearch
+extend-exclude = ["src/swarmsprint/scoring/funsearch_cap_set.py"]  # copied verbatim from DeepMind FunSearch
 force-exclude = true
 target-version = "py313"
 
