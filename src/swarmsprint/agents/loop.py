@@ -12,6 +12,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from swarmsprint.agents import responses
 from swarmsprint.agents.prompts import NUDGE, status
 from swarmsprint.config import RunConfig
 from swarmsprint.infra.docker import CAP, read_capped
@@ -29,6 +30,12 @@ BASH = {
 
 
 def chat(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    if cfg.api == "responses":
+        return responses.chat(cfg.model, messages, BASH)
+    return chat_completions(cfg, messages)
+
+
+def chat_completions(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Call the chat endpoint with the bash tool, streamed so long reasoning cannot hit a gateway timeout.
 
     The streamed deltas are put back together into the usual non-streamed response shape.
@@ -132,6 +139,8 @@ def run_agent(
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
         assistant = {"role": "assistant", "content": msg.get("content")}
+        if "_responses_output" in msg:  # the Responses API needs its own output items back, incl. reasoning
+            assistant["_responses_output"] = msg["_responses_output"]
         messages.append({**assistant, "tool_calls": calls} if calls else assistant)  # strict APIs reject []
         for call in calls:
             log("exec_start", turn=turn, call_id=call["id"], arguments=call["function"]["arguments"])
