@@ -95,9 +95,12 @@ def serve(run_dir: Path, port: int = PORT) -> str:
         with (run_dir / "events.jsonl").open() as f:
             return str(json.loads(f.readline())["run"])
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:  # another run's viewer has the port: take any free one
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{port}"
+    return f"http://127.0.0.1:{server.server_address[1]}"
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@
   .file span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file.fresh span:first-child { color: var(--fresh); }
   .labhead { border-bottom: 2px solid var(--lab); padding-bottom: 4px; margin-bottom: 6px; font-weight: 600; }
-  #chart svg { width: 100%; height: 230px; display: block; }
+  #chart svg { width: 100%; height: 300px; display: block; cursor: crosshair; user-select: none; }
   #chart text { fill: var(--muted); font-size: 11px; }
   #feed .row { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; padding: 5px 6px; border-top: 1px solid var(--line); }
   #feed .remark { color: var(--ink2); grid-column: 2 / 4; }
@@ -57,19 +57,32 @@
   .cmd > pre:first-of-type { color: #c9d6ff; }
   details > summary { cursor: pointer; color: var(--ink2); }
   .line { color: var(--muted); font-style: italic; }
+  nav { display: flex; gap: 4px; }
+  nav button { background: none; border: 0; color: var(--ink2); padding: 4px 10px; border-radius: 4px; cursor: pointer; font: inherit; }
+  nav button.on { background: var(--card); color: var(--ink); }
+  main.tab { display: block; padding: 14px; overflow: auto; min-height: 0; }
+  .hidden { display: none !important; }
+  #ranked td, #points td { padding: 4px 6px; white-space: nowrap; }
+  #points td.x { padding: 0; width: 22px; height: 18px; }
+  main.tab { padding-top: 0; }
+  main.tab thead { position: sticky; top: 0; z-index: 1; background: var(--bg); }  /* header and optimum stay while scrolling */
+  #points tr.opt td { border: 0; box-shadow: inset 0 2px var(--fresh), inset 0 -2px var(--fresh); }
 </style>
 </head>
 <body>
 <header>
   <b id="run">loading…</b><span class="sub2" id="model"></span><span id="clock"></span><span class="sub2" id="state"></span>
+  <nav><button class="on" data-tab="overview">Overview</button><button data-tab="ranked">All submissions, ranked</button><button data-tab="points">Points</button></nav>
   <span class="r" id="labsubs"></span>
 </header>
-<main>
+<main id="overview">
   <section><h2>Leaderboard · lowest f(x)</h2><table id="board"></table></section>
-  <section id="chart"><h2>Best score over time · gap to the optimum, log scale</h2><svg></svg></section>
+  <section id="chart"><h2>Best score over time · gap to the optimum, log scale · drag to zoom, double-click to reset</h2><svg></svg></section>
   <section><h2>Shared drives · /team</h2><div id="files"></div></section>
   <section><h2>Submissions</h2><div id="feed"></div></section>
 </main>
+<main id="ranked" class="tab hidden"><table></table></main>
+<main id="points" class="tab hidden"><p class="meta" style="margin-top: 14px">Each row is a submitted point, oldest first; each cell one coordinate, blue = -5, orange = +5. The yellow row is the optimum.</p><table></table></main>
 <aside id="panel"><div class="top"><b id="ptitle"></b><span class="sub2" id="psub"></span><button onclick="closePanel()">×</button></div><div class="body" id="pbody"></div></aside>
 <script>
 const LAB_COLORS = ["#5b8def", "#e8913a", "#b07cf0", "#4fbfa8"];
@@ -79,7 +92,7 @@ const labs = {};      // group -> {lab, color, subs, files, seen}
 const best = {};      // account -> {score, id}
 const history = {};   // account -> [[t, best]]
 const subs = {};      // id -> {response, account, t, x, remark}
-let t0 = null, tEnd = null, duration = null, credits = null, hubStart = null, fOpt = null, ended = false, panel = null;
+let t0 = null, tEnd = null, duration = null, credits = null, hubStart = null, fOpt = null, xOpt = null, tab = "overview", drawn = 0, ended = false, panel = null;
 
 const $ = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const clip = (s, n) => s.length > n ? s.slice(0, n) + "…" : s;
@@ -157,7 +170,7 @@ function onEvent(e) {
 
 // ---------- hub: submissions, leaderboard, chart ----------
 function onHub(h) {
-  if (h.ev === "hub_start") { credits = h.credits; hubStart = h.t; fOpt = h.problem?.f_opt ?? null; }
+  if (h.ev === "hub_start") { credits = h.credits; hubStart = h.t; fOpt = h.problem?.f_opt ?? null; xOpt = h.problem?.x_opt ?? null; }
   if (h.ev !== "submit") return;
   const r = h.response, w = workers[h.account];
   subs[r.id] = { response: r, account: h.account, t: h.t, x: h.x, remark: h.remark };
@@ -191,18 +204,46 @@ function drawBoard() {
   if (t0) document.getElementById("clock").textContent = `${mins(now())}${duration ? " / " + duration : ""} min`;
 }
 
+let zoom = null, drag = null, scale = null;  // zoom: visible data range; drag: the rectangle being drawn, in pixels
+const compact = v => v >= 1e6 ? `${+(v / 1e6).toPrecision(3)}M` : v >= 1e3 ? `${+(v / 1e3).toPrecision(3)}k` : `${+v.toPrecision(3)}`;
+function logTicks(lo, hi) {  // powers of ten in range; 2 and 5 between them when the range is narrow
+  for (const ms of [[1], [1, 2, 5], [1, 1.5, 2, 3, 5, 7]]) {
+    const out = [];
+    for (let k = Math.floor(lo); k <= Math.ceil(hi); k++) for (const m of ms) { const v = k + Math.log10(m); if (v >= lo && v <= hi) out.push(v); }
+    if (out.length >= 3) return out;
+  }
+  return [lo, (lo + hi) / 2, hi];
+}
+const chartSvg = document.querySelector("#chart svg"), at = e => { const r = chartSvg.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+chartSvg.onmousedown = e => { const [px, py] = at(e); drag = { x0: px, y0: py, x1: px, y1: py }; };
+chartSvg.onmousemove = e => { if (drag) { [drag.x1, drag.y1] = at(e); drawChart(); } };
+chartSvg.onmouseup = () => {
+  const d = drag, s = scale; drag = null;
+  if (d && s && Math.abs(d.x1 - d.x0) > 5 && Math.abs(d.y1 - d.y0) > 5) {
+    const t = px => s.tlo + (px - s.L) / (s.W - s.L - s.R) * (s.thi - s.tlo), v = py => s.ylo + (py - s.T) / (s.H - s.T - s.B) * (s.yhi - s.ylo);
+    zoom = { tlo: t(Math.min(d.x0, d.x1)), thi: t(Math.max(d.x0, d.x1)), ylo: v(Math.min(d.y0, d.y1)), yhi: v(Math.max(d.y0, d.y1)) };
+  }
+  drawChart();
+};
+chartSvg.ondblclick = () => { zoom = null; drawChart(); };
 function drawChart() {
-  const svg = document.querySelector("#chart svg"), W = svg.clientWidth, H = 230, L = 52, R = 110, T = 8, B = 22;
+  const svg = document.querySelector("#chart svg"), W = svg.clientWidth, H = svg.clientHeight, L = 52, R = 110, T = 8, B = 22;
   const gap = v => Math.log10(Math.max(v - fOpt, 1e-9));  // orders of magnitude above the optimum
   const pts = Object.values(history).flat().map(([t, v]) => [t, gap(v)]);
   if (!t0 || !pts.length) return svg.replaceChildren();
-  const xmax = Math.max(duration ? duration * 60 : 0, now() - t0), ys = pts.map(p => p[1]);
-  let ylo = Math.min(...ys), yhi = Math.max(...ys); if (yhi - ylo < 1) { ylo -= 0.5; yhi += 0.5; }
-  const x = t => L + (t - t0) / xmax * (W - L - R), y = v => T + (v - ylo) / (yhi - ylo) * (H - T - B);  // lower = better = top
+  const ys = pts.map(p => p[1]);
+  let tlo = t0, thi = t0 + Math.max(duration ? duration * 60 : 0, now() - t0), ylo = Math.min(...ys) - 0.05, yhi = Math.max(...ys) + 0.05;
+  if (yhi - ylo < 0.3) { ylo -= 0.15; yhi += 0.15; }
+  if (zoom) ({ tlo, thi, ylo, yhi } = zoom);
+  const x = t => L + (t - tlo) / (thi - tlo) * (W - L - R), y = v => T + (v - ylo) / (yhi - ylo) * (H - T - B);  // lower = better = top
+  scale = { tlo, thi, ylo, yhi, L, R, T, B, W, H };
   const ns = "http://www.w3.org/2000/svg", el = (tag, attrs, text) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
   const kids = [];
-  for (let i = 0; i <= 3; i++) { const v = ylo + (yhi - ylo) * i / 3; kids.push(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "#2b313b" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, `1e${v.toFixed(1)}`)); }
-  for (let m = 0; m <= xmax / 60; m += Math.max(1, Math.round(xmax / 60 / 6))) kids.push(el("text", { x: x(t0 + m * 60), y: H - 4, "text-anchor": "middle" }, `${m}m`));
+  const clip = el("clipPath", { id: "plot" }); clip.append(el("rect", { x: L, y: T, width: W - L - R, height: H - T - B })); kids.push(clip);
+  for (const v of logTicks(ylo, yhi)) kids.push(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: "#2b313b" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, compact(10 ** v)));
+  const span = (thi - tlo) / 60, step = [0.25, 0.5, 1, 2, 5, 10, 20].find(s => span / s <= 8) || 30;
+  for (let m = Math.ceil((tlo - t0) / 60 / step) * step; t0 + m * 60 <= thi; m += step) kids.push(el("text", { x: x(t0 + m * 60), y: H - 4, "text-anchor": "middle" }, `${+m.toFixed(2)}m`));
+  if (drag) kids.push(el("rect", { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0), fill: "#5b8def22", stroke: "#5b8def" }));
   let lastLabel = -1e9;
   const order = Object.entries(history).filter(([, h]) => h.length).sort((a, b) => a[1].at(-1)[1] - b[1].at(-1)[1]);
   for (const [n, raw] of order) {
@@ -210,8 +251,8 @@ function drawChart() {
     const w = workers[n]; let d = `M${x(h[0][0])},${y(h[0][1])}`;
     for (let i = 1; i < h.length; i++) d += `H${x(h[i][0])}V${y(h[i][1])}`;
     d += `H${x(now())}`;
-    kids.push(el("path", { d, fill: "none", stroke: w.color, "stroke-width": 2, "stroke-dasharray": w.agent % 2 ? "5 3" : "" }));
-    for (const [t, v] of h) { const c = el("circle", { cx: x(t), cy: y(v), r: 4, fill: w.color, stroke: "#181b21", "stroke-width": 2 }); c.append(el("title", {}, `${n} · gap 1e${v.toFixed(2)} · ${mins(t)} min`)); kids.push(c); }
+    kids.push(el("path", { d, fill: "none", stroke: w.color, "stroke-width": 2, "stroke-dasharray": w.agent % 2 ? "5 3" : "", "clip-path": "url(#plot)" }));
+    for (const [t, v] of h) { const c = el("circle", { cx: x(t), cy: y(v), r: 4, fill: w.color, stroke: "#181b21", "stroke-width": 2, "clip-path": "url(#plot)" }); c.append(el("title", {}, `${n} · gap 1e${v.toFixed(2)} · ${mins(t)} min`)); kids.push(c); }
     lastLabel = Math.max(y(h.at(-1)[1]) + 4, lastLabel + 13);  // stack labels of equal scores
     kids.push(el("text", { x: W - R + 6, y: lastLabel }, n));
   }
@@ -252,6 +293,7 @@ function openSub(id) {
   box.append($("div", "meta", `${s.account} · ${mins(s.t)} min · f = ${r.score}, rank ${r.rank}`));
   if (s.remark) box.append($("p", null, s.remark));
   box.append($("pre", null, "x = " + JSON.stringify(s.x)));
+  if (xOpt) box.append($("div", "meta", `distance to the optimum: ${dist(s.x)}; gap ${(r.score - fOpt).toPrecision(4)}`), $("pre", null, "optimum x = " + JSON.stringify(xOpt.map(v => +v.toFixed(4)))));
   openPanel("sub", id, `Submission #${id}`, "", box);
 }
 async function openFile(g, path) {
@@ -261,6 +303,44 @@ async function openFile(g, path) {
 }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closePanel(); });
 
+// ---------- tabs: every submission ranked, every point ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  tab = b.dataset.tab; drawn = 0;
+  document.querySelectorAll("nav button").forEach(o => o.classList.toggle("on", o === b));
+  ["overview", "ranked", "points"].forEach(id => document.getElementById(id).classList.toggle("hidden", id !== tab));
+  drawTabs();
+});
+const dist = x => xOpt ? Math.hypot(...x.map((v, i) => v - xOpt[i])).toFixed(2) : "–";
+const cell = v => { const c = $("td", "x"); c.title = v.toFixed(3);
+  const rgba = v < 0 ? `rgba(91,141,239,${-v / 5})` : `rgba(232,145,58,${v / 5})`;
+  c.style.background = `linear-gradient(${rgba}, ${rgba}), var(--bg)`; return c; };  // opaque, so the sticky row hides what scrolls under it
+function subRow(id, cols) {
+  const s = subs[id], w = workers[s.account] || { color: "#888", lab: "?" }, tr = $("tr", "click"), who = $("td");
+  tr.onclick = () => openSub(id); who.append(dot(w.color), s.account);
+  tr.append(...cols(s, who)); return tr;
+}
+function drawTabs() {
+  const ids = Object.keys(subs).map(Number);
+  if (tab === "overview" || ids.length === drawn) return;
+  drawn = ids.length;
+  const gapOf = s => fOpt == null ? "–" : (s.response.score - fOpt).toPrecision(4);
+  if (tab === "ranked") {
+    ids.sort((a, b) => subs[a].response.score - subs[b].response.score || a - b);
+    const head = $("tr"); ["#", "min", "agent", "f(x)", "gap", "distance to optimum", "remark"].forEach(h => head.append($("th", null, h)));
+    const thead = $("thead"); thead.append(head);
+    document.querySelector("#ranked table").replaceChildren(thead, ...ids.map((id, i) => subRow(id, (s, who) =>
+      [$("td", "meta", i + 1), $("td", "meta", mins(s.t)), who, $("td", "num", s.response.score.toPrecision(7)), $("td", "num", gapOf(s)), $("td", "num", dist(s.x)), $("td", "meta", clip(s.remark, 80))])));
+  } else {
+    ids.sort((a, b) => a - b);
+    const rows = ids.map(id => subRow(id, (s, who) => [$("td", "meta", `#${id}`), who, $("td", "num", gapOf(s)), ...s.x.map(cell)]));
+    const head = $("tr"), thead = $("thead"); ["#", "agent", "gap"].forEach(h => head.append($("th", null, h)));
+    if (xOpt) xOpt.forEach((_, i) => head.append($("th", null, `x${i + 1}`)));
+    thead.append(head);
+    if (xOpt) { const o = $("tr", "opt"); o.append($("td", "meta", "opt"), $("td", null, "optimum"), $("td", "num", "0"), ...xOpt.map(cell)); thead.append(o); }
+    document.querySelector("#points table").replaceChildren(thead, ...rows);
+  }
+}
+
 // ---------- polling ----------
 async function poll(name, handle) {
   const buf = await (await fetch(`/${name}?from=${offsets[name]}`)).arrayBuffer();
@@ -268,7 +348,7 @@ async function poll(name, handle) {
   for (const line of new TextDecoder().decode(buf).split("\n")) if (line) handle(JSON.parse(line));
 }
 async function tick() {
-  try { await poll("events", onEvent); await poll("hub", onHub); drawBoard(); drawChart(); }
+  try { await poll("events", onEvent); await poll("hub", onHub); drawBoard(); drawChart(); drawTabs(); }
   catch (err) { document.getElementById("state").textContent = "viewer offline"; }
   setTimeout(tick, 1500);
 }

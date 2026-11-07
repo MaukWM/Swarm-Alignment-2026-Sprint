@@ -1,0 +1,13 @@
+name = "five"
+model = "qwen3.8-flash-next"
+duration_minutes = 30
+
+[[groups]]
+name = "ducks"
+agents = 5
+lab = "Duck Labs"
+
+[[groups]]
+name = "dogs"
+agents = 5
+lab = "Dog Labs"
