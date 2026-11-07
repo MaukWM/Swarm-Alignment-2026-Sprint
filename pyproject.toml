@@ -1,0 +1,31 @@
+[project]
+name = "swarmsprint"
+version = "0.1.0"
+description = "Two LLM agent swarms racing on one leaderboard"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pre-commit>=4.2.0",
+    "mypy>=1.15.0",
+    "ruff>=0.11.0",
+    "pip-audit>=2.9.0",
+]
+
+[tool.mypy]
+python_version = "3.13"
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_unreachable = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
