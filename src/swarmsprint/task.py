@@ -1,12 +1,10 @@
 """Score an agent's `priority`: DeepMind's `solve` (n = 8) runs sandboxed, its cap set is checked with `is_cap_set`."""
 
-import contextlib
 import json
-import os
-import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -14,11 +12,20 @@ import numpy as np
 from swarmsprint import funsearch_cap_set as fs
 
 RUNNER = Path(__file__).with_name("evaluate_priority.py")
+SANDBOX_UID = 65534  # nobody: cannot signal the verifier or write its files
+# one evaluation at a time, so killing every sandbox process afterwards is safe; a uid pool if load matters
+LOCK = threading.Lock()
+
+
+def kill_sandbox() -> None:
+    """Kill every process of the sandbox uid, including any that left the process group with setsid."""
+    kill_all = "import os, signal; os.kill(-1, signal.SIGSTOP); os.kill(-1, signal.SIGKILL)"  # stopped can't fork
+    subprocess.run([sys.executable, "-c", kill_all], user=SANDBOX_UID, group=SANDBOX_UID, extra_groups=[])
 
 
 def score(source: str, timeout: float = 30) -> dict[str, int | str]:
     """Return {"score": cap set size} or {"error": reason}; the program's output is only a claim we verify."""
-    with tempfile.TemporaryFile() as o, tempfile.TemporaryFile() as e:
+    with LOCK, tempfile.TemporaryFile() as o, tempfile.TemporaryFile() as e:
         p = subprocess.Popen(
             [sys.executable, "-I", str(RUNNER)],
             stdin=subprocess.PIPE,
@@ -26,14 +33,16 @@ def score(source: str, timeout: float = 30) -> dict[str, int | str]:
             stderr=e,
             env={"OPENBLAS_NUM_THREADS": "1"},
             start_new_session=True,
+            user=SANDBOX_UID,
+            group=SANDBOX_UID,
+            extra_groups=[],
         )
         try:
             p.communicate(source.encode(), timeout=timeout)
         except subprocess.TimeoutExpired:
             pass
         finally:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(p.pid, signal.SIGKILL)  # also the program's children
+            kill_sandbox()
             p.wait()
         o.seek(0)
         e.seek(0)
