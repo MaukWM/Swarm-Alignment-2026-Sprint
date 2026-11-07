@@ -3,7 +3,9 @@ name = "swarmsprint"
 version = "0.1.0"
 description = "Two LLM agent swarms racing on one leaderboard"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pydantic>=2.14.2",
+]
 
 [dependency-groups]
 dev = [
@@ -29,3 +31,7 @@ target-version = "py313"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = []
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.13"]
+build-backend = "uv_build"

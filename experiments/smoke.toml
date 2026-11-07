@@ -1,0 +1,9 @@
+name = "smoke"
+
+[[groups]]
+name = "ducks"
+agents = 4
+
+[[groups]]
+name = "dogs"
+agents = 4
