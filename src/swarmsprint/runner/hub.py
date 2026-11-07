@@ -1,4 +1,4 @@
-"""Start a run's leaderboard on the host, give every worker its token, and check that every group reaches it."""
+"""Start a run's hub on the host, give every worker its token, and check that every group reaches it."""
 
 import json
 import os
@@ -25,33 +25,33 @@ def port_free(port: int) -> bool:
 
 
 def serve(cfg: RunConfig, workers: list[Worker], out: Path) -> tuple[subprocess.Popen[bytes], dict[str, str]]:
-    """Create one account and token per worker and start the leaderboard as a subprocess; returns it and the tokens."""
-    tokens = {w.name: f"lb_{secrets.token_urlsafe(24)}" for w in workers}
+    """Create one account and token per worker and start the hub as a subprocess; returns it and the tokens."""
+    tokens = {w.name: f"hub_{secrets.token_urlsafe(24)}" for w in workers}
     (out / "accounts.json").write_text(json.dumps(tokens, indent=1))
-    env = {**os.environ, "LB_ACCOUNTS": str(out / "accounts.json"), "LB_EVENTS": str(out / "leaderboard.jsonl")}
-    app = ["uvicorn", "swarmsprint.leaderboard.main:app", "--host", "127.0.0.1", "--port", str(cfg.leaderboard_port)]
-    with (out / "leaderboard.log").open("w") as log:
-        # own process group: a Ctrl-C in the terminal reaches only the runner, which stops the leaderboard itself
+    env = {**os.environ, "HUB_ACCOUNTS": str(out / "accounts.json"), "HUB_EVENTS": str(out / "hub.jsonl")}
+    app = ["uvicorn", "swarmsprint.hub.main:app", "--host", "127.0.0.1", "--port", str(cfg.hub_port)]
+    with (out / "hub.log").open("w") as log:
+        # own process group: a Ctrl-C in the terminal reaches only the runner, which stops the hub itself
         server = subprocess.Popen([sys.executable, "-m", *app], env=env, stdout=log, stderr=log, process_group=0)
     return server, tokens
 
 
 def hand_out(cfg: RunConfig, workers: list[Worker], server: subprocess.Popen[bytes], tokens: dict[str, str]) -> None:
-    """Wait for the leaderboard, write each token to its worker's /root/.token, and check every group reaches it."""
+    """Wait for the hub, write each token to its worker's /root/.token, and check every group reaches it."""
     wait_ready(cfg, server)
     for w in workers:
         docker("exec", "-i", w.name, "sh", "-c", "umask 077 && cat > /root/.token", stdin=tokens[w.name])
-    # end to end: a worker of each group, through its forwarder, must get its own account back from this leaderboard
+    # end to end: a worker of each group, through its forwarder, must get its own account back from this hub
     for group in cfg.groups:
         w = next(w for w in workers if w.group == group.name)
         auth = '-H "Authorization: Bearer $(cat /root/.token)"'
-        me = f"curl -fsS -m 10 -A {PROBE_AGENT} {auth} http://{cfg.leaderboard_host}/me"
+        me = f"curl -fsS -m 10 -A {PROBE_AGENT} {auth} http://{cfg.hub_host}/me"
         if json.loads(docker("exec", w.name, "sh", "-c", me))["account"] != w.name:
-            raise SystemExit(f"group {group.name}: the leaderboard answered for another account")
+            raise SystemExit(f"group {group.name}: the hub answered for another account")
 
 
 def stop(server: subprocess.Popen[bytes]) -> int | None:
-    """Stop the leaderboard (kill after 10 s); return its exit code if it had already died during the run."""
+    """Stop the hub (kill after 10 s); return its exit code if it had already died during the run."""
     died = server.poll()
     server.terminate()
     try:
@@ -63,11 +63,11 @@ def stop(server: subprocess.Popen[bytes]) -> int | None:
 
 
 def wait_ready(cfg: RunConfig, server: subprocess.Popen[bytes]) -> None:
-    """Wait up to 30 s until the leaderboard answers at all (a 401 counts: no token is needed for this check)."""
-    request = urllib.request.Request(f"http://127.0.0.1:{cfg.leaderboard_port}/me", headers={"User-Agent": PROBE_AGENT})
+    """Wait up to 30 s until the hub answers at all (a 401 counts: no token is needed for this check)."""
+    request = urllib.request.Request(f"http://127.0.0.1:{cfg.hub_port}/me", headers={"User-Agent": PROBE_AGENT})
     for _ in range(60):
         if server.poll() is not None:
-            raise SystemExit("the leaderboard exited at start; see leaderboard.log in the run directory")
+            raise SystemExit("the hub exited at start; see hub.log in the run directory")
         try:
             urllib.request.urlopen(request, timeout=2).close()
             return
@@ -75,4 +75,4 @@ def wait_ready(cfg: RunConfig, server: subprocess.Popen[bytes]) -> None:
             return
         except OSError:
             time.sleep(0.5)
-    raise SystemExit("the leaderboard did not answer within 30 s")
+    raise SystemExit("the hub did not answer within 30 s")

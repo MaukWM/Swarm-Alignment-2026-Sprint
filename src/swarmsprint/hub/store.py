@@ -1,4 +1,4 @@
-"""In-memory leaderboard state plus the append-only event log, the run's ground truth."""
+"""In-memory hub state (accounts, submissions) plus the append-only event log, the run's ground truth."""
 
 import hashlib
 import json
@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from swarmsprint.leaderboard.schemas import LeaderboardRow, Submission, SubmitRequest
+from swarmsprint.hub.schemas import LeaderboardRow, Submission, SubmitRequest
 from swarmsprint.scoring.score import ScoreResult
 
 

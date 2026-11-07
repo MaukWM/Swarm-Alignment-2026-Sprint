@@ -1,6 +1,6 @@
-"""Leaderboard API: submit a priority program, see each account's best score and your own submissions.
+"""Hub API: submit a priority program, see each account's best score and your own submissions.
 
-usage: LB_ACCOUNTS=accounts.json LB_EVENTS=events.jsonl uvicorn swarmsprint.leaderboard.main:app --port 18080
+usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl uvicorn swarmsprint.hub.main:app --port 18080
 accounts.json maps account name -> bearer token.
 """
 
@@ -17,8 +17,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from swarmsprint.leaderboard.schemas import LeaderboardRow, MeResponse, SubmitRequest, SubmitResponse
-from swarmsprint.leaderboard.store import Store
+from swarmsprint.hub.schemas import LeaderboardRow, MeResponse, SubmitRequest, SubmitResponse
+from swarmsprint.hub.store import Store
 from swarmsprint.scoring.score import ScoreResult, score
 
 MAX_BODY = 200_000  # bytes; a program may be 100 KB
@@ -27,12 +27,12 @@ SCORING = threading.BoundedSemaphore(4)  # scorer containers running at once (1 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    accounts = json.loads(Path(os.environ["LB_ACCOUNTS"]).read_text())
-    app.state.store = Store(accounts, Path(os.environ["LB_EVENTS"]))
+    accounts = json.loads(Path(os.environ["HUB_ACCOUNTS"]).read_text())
+    app.state.store = Store(accounts, Path(os.environ["HUB_EVENTS"]))
     yield
 
 
-app = FastAPI(title="Leaderboard", lifespan=lifespan)
+app = FastAPI(title="Hub", lifespan=lifespan)
 Credentials = Annotated[HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))]
 
 

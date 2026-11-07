@@ -71,14 +71,14 @@ def up(cfg: RunConfig) -> list[Worker]:
 
 
 def start_forwarder(cfg: RunConfig, uplink: str, net: str, tags: list[str]) -> str:
-    """Start one group's reverse proxy to the leaderboard; it reports each caller's IP in X-Forwarded-For."""
+    """Start one group's reverse proxy to the hub; it reports each caller's IP in X-Forwarded-For."""
     on_networks = ["--network", uplink, "--add-host", "host.docker.internal:host-gateway", *tags]
     own = ["--label", "swarmsprint.forwarder=1", "--restart", "unless-stopped", "--sysctl", "net.ipv4.ip_forward=0"]
     caddy_needs = ["--cap-add", "NET_BIND_SERVICE", "--tmpfs", "/data:size=16m", "--tmpfs", "/config:size=16m"]
     many_conns = ["--ulimit", "nofile=65536:65536"]  # after LIMITS, so it wins: a full table would block the group
-    proxy = ["caddy", "reverse-proxy", "--from", ":80", "--to", f"host.docker.internal:{cfg.leaderboard_port}"]
+    proxy = ["caddy", "reverse-proxy", "--from", ":80", "--to", f"host.docker.internal:{cfg.hub_port}"]
     fid = docker("run", "-d", *on_networks, *own, *LIMITS, *HARDEN, *caddy_needs, *many_conns, PROXY, *proxy)
-    docker("network", "connect", "--alias", cfg.leaderboard_host, net, fid)
+    docker("network", "connect", "--alias", cfg.hub_host, net, fid)
     return fid
 
 

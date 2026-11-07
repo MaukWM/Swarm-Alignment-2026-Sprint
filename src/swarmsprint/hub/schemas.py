@@ -1,4 +1,4 @@
-"""Request and response schemas of the leaderboard API."""
+"""Request and response schemas of the hub API."""
 
 from pydantic import BaseModel, Field
 
