@@ -31,8 +31,13 @@ BASH = {
 
 def chat(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
     if cfg.api == "responses":
-        return responses.chat(cfg.model, messages, BASH)
+        return responses.chat(cfg.model, messages, BASH, *endpoint(cfg))
     return chat_completions(cfg, messages)
+
+
+def endpoint(cfg: RunConfig) -> tuple[str, str]:
+    """URL and API key of the model endpoint, from the env vars the config names."""
+    return os.environ[f"{cfg.endpoint}_BASE_URL"], os.environ.get(f"{cfg.endpoint}_API_KEY", "")
 
 
 def chat_completions(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -42,8 +47,8 @@ def chat_completions(cfg: RunConfig, messages: list[dict[str, Any]]) -> dict[str
     """
     stream = {"stream": True, "stream_options": {"include_usage": True}}
     body = json.dumps({"model": cfg.model, "messages": messages, "tools": [BASH], **stream}).encode()
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('LLM_API_KEY', '')}"}
-    req = urllib.request.Request(os.environ["LLM_BASE_URL"], body, headers)
+    url, key = endpoint(cfg)
+    req = urllib.request.Request(url, body, {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
     msg: dict[str, Any] = {"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": []}
     choice: dict[str, Any] = {"message": msg, "finish_reason": None}
     out: dict[str, Any] = {"choices": [choice]}

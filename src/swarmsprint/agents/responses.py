@@ -7,7 +7,6 @@ calls without OpenAI storing anything (`store: false`).
 """
 
 import json
-import os
 import urllib.request
 from typing import Any
 
@@ -25,7 +24,7 @@ def to_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return items
 
 
-def chat(model: str, messages: list[dict[str, Any]], tool: dict[str, Any]) -> dict[str, Any]:
+def chat(model: str, messages: list[dict[str, Any]], tool: dict[str, Any], url: str, key: str) -> dict[str, Any]:
     """One Responses API call, returned in the chat-completions response shape (plus the raw response)."""
     fn = tool["function"]
     body = {
@@ -37,8 +36,8 @@ def chat(model: str, messages: list[dict[str, Any]], tool: dict[str, Any]) -> di
         "store": False,
         "include": ["reasoning.encrypted_content"],
     }
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('LLM_API_KEY', '')}"}
-    req = urllib.request.Request(os.environ["LLM_BASE_URL"], json.dumps(body).encode(), headers)
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
+    req = urllib.request.Request(url, json.dumps(body).encode(), headers)
     with urllib.request.urlopen(req, timeout=600) as r:
         raw: dict[str, Any] = json.load(r)
     output = raw.get("output") or []

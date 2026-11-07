@@ -10,7 +10,7 @@ Use the hub with the token in /root/.token, for example:
 
     POST /submit       {"x": [<$dimension numbers>], "remark": "<optional, up to 250 characters, shown on the leaderboard>"}; returns f(x) and your rank
     GET  /leaderboard  the best score of each account
-    GET  /me           your best score, your credits and your submissions
+    GET  /me           your best score, your credits and your submissions$board
 
 Each submission costs $cost credits. You start with $start credits and receive $per_minute per minute.
 

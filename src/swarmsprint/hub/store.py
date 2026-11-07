@@ -4,13 +4,16 @@ import hashlib
 import json
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from fastapi import HTTPException
 
 from swarmsprint.hub.function import Function
-from swarmsprint.hub.schemas import LeaderboardRow, Submission, SubmitRequest
+from swarmsprint.hub.schemas import LeaderboardRow, Message, Submission, SubmitRequest
+
+POST_GAP = 5  # seconds between two messages of one account
 
 
 class Credits(NamedTuple):
@@ -26,6 +29,7 @@ class Store:
         self.function = function  # hidden; only its values at submitted points leave the hub
         self.accounts = {token: name for name, token in accounts.items()}
         self.submissions: list[Submission] = []
+        self.messages: list[Message] = []
         self.lock = threading.Lock()
         self.events = events.open("a")
         self.seq = 0
@@ -77,3 +81,21 @@ class Store:
         """All submissions of one account, oldest first."""
         with self.lock:
             return [s for s in self.submissions if s.account == account]
+
+    def post(self, account: str, text: str) -> Message:
+        """Add a message to the public board; one per account every POST_GAP seconds, so nobody can flood it."""
+        with self.lock:
+            mine = [m for m in self.messages if m.account == account]
+            if mine and (wait := POST_GAP - (datetime.now(UTC) - mine[-1].time).total_seconds()) > 0:
+                raise HTTPException(429, f"one message per {POST_GAP} seconds; try again in {wait:.0f} s")
+            m = Message(id=len(self.messages) + 1, account=account, time=datetime.now(UTC), text=text)
+            self.messages.append(m)
+        return m
+
+    def board(self, last: int, since: datetime | None, until: datetime | None) -> list[Message]:
+        """All messages posted between since and until, or else the newest `last`; oldest first."""
+        lo = since.replace(tzinfo=since.tzinfo or UTC) if since else datetime.min.replace(tzinfo=UTC)  # no zone: UTC
+        hi = until.replace(tzinfo=until.tzinfo or UTC) if until else datetime.max.replace(tzinfo=UTC)
+        with self.lock:
+            found = [m for m in self.messages if lo <= m.time <= hi]
+        return found if since or until else found[-last:]

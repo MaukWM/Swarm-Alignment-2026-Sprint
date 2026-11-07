@@ -38,6 +38,7 @@ def serve(
         "HUB_SEED": str(seed),
         "HUB_FUNCTION": str(cfg.function),
         "HUB_DIMENSION": str(cfg.dimension),
+        "HUB_BOARD": "on" if cfg.board else "off",
         "HUB_CREDITS": json.dumps(
             {
                 "start": cfg.credits_start,

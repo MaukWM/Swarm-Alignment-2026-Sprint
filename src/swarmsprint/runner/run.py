@@ -21,7 +21,7 @@ import numpy as np
 
 from swarmsprint.agents.loop import BASH, Log, run_agent
 from swarmsprint.agents.prompts import render
-from swarmsprint.config import Group, RunConfig, load
+from swarmsprint.config import Group, RunConfig, for_group, load
 from swarmsprint.hub.function import HIGH, LOW, Function
 from swarmsprint.infra import containers
 from swarmsprint.infra.docker import docker
@@ -83,6 +83,7 @@ def main(path: str) -> int:
     stop, failed, workers = threading.Event(), list[str](), list[containers.Worker]()
     server: subprocess.Popen[bytes] | None = None
     try:
+        endpoint = {g.name: os.environ[f"{for_group(cfg, g).endpoint}_BASE_URL"] for g in cfg.groups}  # fail early
         seed = cfg.seed if cfg.seed is not None else secrets.randbits(31) + 1
         data = write_data(cfg, seed, out)
         workers = containers.up(cfg)
@@ -104,7 +105,6 @@ def main(path: str) -> int:
             "diff": git("diff", "HEAD"),
         }
         image = docker("image", "inspect", containers.IMAGE, "--format", "{{.Id}}")
-        endpoint = os.environ["LLM_BASE_URL"]
         log(
             "start",
             config=cfg.model_dump(),
@@ -236,12 +236,13 @@ def drive(
             n=group.agents,
             dimension=cfg.dimension,
             points=cfg.initial_points,
+            board="\n" + render("board") if cfg.board else "",
             start=f"{cfg.credits_start:g}",
             per_minute=f"{cfg.credits_per_minute:g}",
             cost=f"{cfg.credits_per_submission:g}",
         )
         tagged("prompt", system=system, task=task)
-        run_agent(cfg, w.name, system, task, lambda: scores.of(w.name), tagged, stop)
+        run_agent(for_group(cfg, group), w.name, system, task, lambda: scores.of(w.name), tagged, stop)
     except Exception as e:
         tagged("error", error=repr(e))
         failed.append(w.name)

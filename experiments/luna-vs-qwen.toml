@@ -1,0 +1,17 @@
+name = "lunaqwen"
+model = "qwen3.8-flash-next"
+duration_minutes = 30
+hub_port = 18091
+
+[[groups]]
+name = "ducks"
+agents = 5
+lab = "Duck Labs"
+
+[[groups]]
+name = "dogs"
+agents = 5
+lab = "Dog Labs"
+model = "gpt-6-luna"
+api = "responses"
+endpoint = "OPENAI"

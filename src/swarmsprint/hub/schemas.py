@@ -1,5 +1,6 @@
 """Request and response schemas of the hub API."""
 
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field
@@ -45,3 +46,14 @@ class MeResponse(BaseModel):
     best: float | None
     credits: float
     submissions: list[Submission]
+
+
+class MessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1000, description="everyone on the hub can read it")
+
+
+class Message(BaseModel):
+    id: int
+    account: str
+    time: datetime
+    text: str

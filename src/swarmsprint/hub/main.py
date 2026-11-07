@@ -1,27 +1,36 @@
 """Hub API: evaluate the hidden function at a point, see each account's best value and your own submissions.
 
 usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl HUB_SEED=<int> HUB_FUNCTION=9 HUB_DIMENSION=20 \
-       HUB_CREDITS='{"start": 10, "per_minute": 1, "per_submission": 1}' uvicorn swarmsprint.hub.main:app --port 18080
-accounts.json maps account name -> bearer token.
+       HUB_CREDITS='{"start": 10, "per_minute": 1, "per_submission": 1}' HUB_BOARD=on uvicorn swarmsprint.hub.main:app
+accounts.json maps account name -> bearer token; HUB_BOARD=off leaves out the message board.
 """
 
 import json
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from swarmsprint.hub.function import Function
-from swarmsprint.hub.schemas import LeaderboardRow, MeResponse, SubmitRequest, SubmitResponse
+from swarmsprint.hub.schemas import (
+    LeaderboardRow,
+    MeResponse,
+    Message,
+    MessageRequest,
+    SubmitRequest,
+    SubmitResponse,
+)
 from swarmsprint.hub.store import Credits, Store
 
 MAX_BODY = 50_000  # bytes; a point of 20 numbers is well under 1 KB
+BOARD = os.environ.get("HUB_BOARD", "on") != "off"
 
 
 @asynccontextmanager
@@ -102,21 +111,26 @@ def log_request(request: Request, status: int, **fields: str) -> None:
 async def invalid_body(request: Request, exc: RequestValidationError) -> JSONResponse:
     """Explain what is wrong without echoing the body back."""
     errors = [{"field": ".".join(str(p) for p in e["loc"] if p != "body"), "problem": e["msg"]} for e in exc.errors()]
-    return JSONResponse({"detail": errors, "hint": "send JSON with Content-Type: application/json"}, status_code=422)
+    hint = {"hint": "send JSON with Content-Type: application/json"} if request.method == "POST" else {}
+    return JSONResponse({"detail": errors, **hint}, status_code=422)
 
 
 @app.get("/")
 def index() -> dict[str, Any]:
     """What the hub is and how to use it; open to everyone."""
+    endpoints = {
+        "POST /submit": "evaluate a point: {x, remark}",
+        "GET /leaderboard": "best (lowest) value of each account",
+        "GET /me": "your best score, your credits and your submissions",
+    }
+    if BOARD:
+        endpoints["POST /messages"] = "post to the public message board: {text}"
+        endpoints["GET /messages"] = "the latest messages (?last=N), or those between two times (?since=&until=)"
     return {
         "service": "Optimization Hub",
         "problem": "minimise a hidden function of x in [-5, 5]^n: submit a point, get the function's value there",
         "auth": "Authorization: Bearer <token>",
-        "endpoints": {
-            "POST /submit": "evaluate a point: {x, remark}",
-            "GET /leaderboard": "best (lowest) value of each account",
-            "GET /me": "your best score, your credits and your submissions",
-        },
+        "endpoints": endpoints,
         "docs": "/docs",
     }
 
@@ -149,3 +163,26 @@ def me(caller: CallerDep, store: StoreDep) -> MeResponse:
     credits = round(store.balance(caller.name), 2)
     store.log("me", caller.name, caller.token, best=best, credits=credits, submission_ids=[s.id for s in mine])
     return MeResponse(account=caller.name, best=best, credits=credits, submissions=mine)
+
+
+if BOARD:
+
+    @app.post("/messages")
+    def post_message(body: MessageRequest, caller: CallerDep, store: StoreDep) -> Message:
+        """Post a message to the public board; everyone on the hub can read it."""
+        m = store.post(caller.name, body.text)
+        store.log("message", caller.name, caller.token, message=m.model_dump(mode="json"))
+        return m
+
+    @app.get("/messages")
+    def messages(
+        caller: CallerDep,
+        store: StoreDep,
+        last: Annotated[int, Query(ge=1, le=200)] = 20,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[Message]:
+        """The latest messages, or those posted between since and until (ISO 8601 or Unix time); oldest first."""
+        found = store.board(last, since, until)
+        store.log("messages", caller.name, caller.token, ids=[m.id for m in found])
+        return found

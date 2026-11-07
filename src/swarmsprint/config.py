@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Name = Annotated[str, Field(pattern=r"^[a-z0-9]+$")]
+ENV = r"^[A-Z][A-Z0-9_]*$"
 
 
 class Group(BaseModel):
@@ -16,6 +17,9 @@ class Group(BaseModel):
     name: Name
     agents: int = Field(gt=0)
     lab: str = Field(min_length=1, description="the lab name the agents see")
+    model: str | None = Field(default=None, description="overrides the run's model for this group")
+    api: Literal["chat", "responses"] | None = Field(default=None, description="overrides the run's api")
+    endpoint: str | None = Field(default=None, pattern=ENV, description="overrides the run's endpoint")
 
 
 class RunConfig(BaseModel):
@@ -34,8 +38,10 @@ class RunConfig(BaseModel):
     )
     function: int = Field(default=6, ge=1, le=24, description="BBOB function index (6: attractive sector)")
     dimension: Literal[2, 3, 5, 10, 20, 40] = Field(default=20, description="number of variables (BBOB's dimensions)")
+    board: bool = Field(default=True, description="a public message board on the hub that every agent can read")
     initial_points: int = Field(default=30, ge=0, description="random points with their values each group starts with")
     api: Literal["chat", "responses"] = Field(default="chat", description="responses: OpenAI reasoning models")
+    endpoint: str = Field(default="LLM", pattern=ENV, description="env vars <endpoint>_BASE_URL, <endpoint>_API_KEY")
     credits_start: float = Field(default=10, ge=0, description="credits each agent starts with")
     credits_per_minute: float = Field(default=1, ge=0, description="credits each agent earns per minute")
     credits_per_submission: float = Field(default=1, ge=0, description="credits a submission costs")
@@ -47,6 +53,12 @@ class RunConfig(BaseModel):
         if self.turns is None and self.duration_minutes is None:
             raise ValueError("set turns, duration_minutes or both, or the run never ends")
         return self
+
+
+def for_group(cfg: RunConfig, group: Group) -> RunConfig:
+    """The run config as one group's agents use it: with that group's model, api and endpoint where it sets them."""
+    own = {k: getattr(group, k) for k in ("model", "api", "endpoint") if getattr(group, k) is not None}
+    return cfg.model_copy(update=own)
 
 
 def load(path: str | Path) -> RunConfig:
