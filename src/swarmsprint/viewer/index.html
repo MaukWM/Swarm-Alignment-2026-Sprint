@@ -79,7 +79,7 @@ const labs = {};      // group -> {lab, color, subs, files, seen}
 const best = {};      // account -> {score, id}
 const history = {};   // account -> [[t, best]]
 const subs = {};      // id -> {received, response, account, t}
-let t0 = null, tEnd = null, duration = null, ended = false, panel = null;
+let t0 = null, tEnd = null, duration = null, credits = null, hubStart = null, ended = false, panel = null;
 
 const $ = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const clip = (s, n) => s.length > n ? s.slice(0, n) + "…" : s;
@@ -97,7 +97,7 @@ function onStart(e) {
   e.config.groups.forEach((g, i) => labs[g.name] = { lab: g.lab, color: LAB_COLORS[i % LAB_COLORS.length], subs: 0, files: [], seen: {} });
   for (const w of e.workers) {
     const feed = $("div", "feedcol"); feed.style.setProperty("--lab", labs[w.group].color);
-    workers[w.name] = { ...labs[w.group], group: w.group, agent: w.agent, feed, now: "starting", nowT: e.t, subs: 0 };
+    workers[w.name] = { ...labs[w.group], group: w.group, agent: w.agent, feed, now: "starting", nowT: e.t, subs: 0, paid: 0 };
     history[w.name] = [];
   }
   drawFilesSkeleton();
@@ -126,8 +126,7 @@ function onEvent(e) {
   if (!w) return;
   if (e.ev === "prompt") add(e.worker, fold("prompt", `${e.system}\n\n${e.task}`));
   if (e.ev === "model" || e.ev === "model_error") {
-    for (const m of e.new_messages || []) {
-      if (m.role !== "assistant") continue;
+    for (const m of e.response ? [e.response.choices[0].message] : []) {  // the reply; new_messages are the inputs
       const c = $("div", "card say");
       c.append($("div", "meta", `turn ${e.turn} · ${mins(e.t)} min`));
       if (m.reasoning_content) c.append(fold(`reasoning: ${clip(m.reasoning_content.trim().replace(/\s+/g, " "), 90)}`, m.reasoning_content));
@@ -158,7 +157,8 @@ function onEvent(e) {
 
 // ---------- hub: submissions, leaderboard, chart ----------
 function onHub(h) {
-  if (h.ev === "submit_received") subs[h.id] = { received: h };
+  if (h.ev === "hub_start") { credits = h.credits; hubStart = h.t; }
+  if (h.ev === "submit_received") { subs[h.id] = { received: h }; if (workers[h.account]) workers[h.account].paid++; }  // the hub charges on arrival
   if (h.ev !== "submit") return;
   const r = h.response, w = workers[h.account];
   Object.assign(subs[r.id] ??= {}, { response: r, account: h.account, t: h.t });
@@ -177,12 +177,13 @@ function onHub(h) {
 
 function drawBoard() {
   const board = document.getElementById("board");
-  const head = $("tr"); ["#", "agent", "lab", "best", "subs", "now"].forEach((h, i) => head.append($("th", i === 3 || i === 4 ? "num" : "", h)));
+  const head = $("tr"); ["#", "agent", "lab", "best", "subs", "credits", "now"].forEach((h, i) => head.append($("th", i >= 3 && i <= 5 ? "num" : "", h)));
   const names = Object.keys(workers).sort((a, b) => (best[a]?.score ?? 1e9) - (best[b]?.score ?? 1e9) || (best[a]?.id ?? 0) - (best[b]?.id ?? 0));
   const rows = names.map((n, i) => {
     const w = workers[n], tr = $("tr", "click"), lab = $("td"); tr.onclick = () => openAgent(n);
     lab.append(dot(w.color), w.lab);
     tr.append($("td", "meta", best[n] ? i + 1 : "–"), $("td", null, n), lab, $("td", "num", best[n]?.score ?? "–"), $("td", "num", w.subs),
+              $("td", "num", credits ? (credits.start + credits.per_minute * (now() - hubStart) / 60 - credits.per_submission * w.paid).toFixed(1) : "–"),
               $("td", "now", ended ? w.now : `${w.now} · ${ago(w.nowT)}`));
     return tr;
   });

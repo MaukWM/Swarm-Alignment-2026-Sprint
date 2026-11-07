@@ -23,6 +23,7 @@ class SubmitResponse(BaseModel):
     score: float | None = None
     error: str | None = None
     rank: int | None = None
+    credits: float
 
 
 class LeaderboardRow(BaseModel):
@@ -36,4 +37,5 @@ class LeaderboardRow(BaseModel):
 class MeResponse(BaseModel):
     account: str
     best: float | None
+    credits: float
     submissions: list[Submission]

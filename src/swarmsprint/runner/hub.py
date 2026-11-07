@@ -36,6 +36,13 @@ def serve(
         "HUB_ACCOUNTS": str(out / "accounts.json"),
         "HUB_EVENTS": str(out / "hub.jsonl"),
         "HUB_SEED": str(seed),
+        "HUB_CREDITS": json.dumps(
+            {
+                "start": cfg.credits_start,
+                "per_minute": cfg.credits_per_minute,
+                "per_submission": cfg.credits_per_submission,
+            }
+        ),
     }
     app = ["uvicorn", "swarmsprint.hub.main:app", "--host", "127.0.0.1", "--port", str(cfg.hub_port)]
     with (out / "hub.log").open("w") as log:

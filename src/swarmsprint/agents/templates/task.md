@@ -21,7 +21,9 @@ Use the hub with the token in /root/.token, for example:
 
     POST /submit       {"program": "<python source>", "remark": "<optional, up to 250 characters, shown on the leaderboard>"}; returns your score and rank
     GET  /leaderboard  the best score of each account
-    GET  /me           your best score and your submissions, with their code
+    GET  /me           your best score, your credits and your submissions, with their code
+
+Each submission costs $cost credits. You start with $start credits and receive $per_minute per minute.
 
 You are one of $n $lab researchers working on this, each in their own container. /team is a folder shared by all $lab researchers.
 

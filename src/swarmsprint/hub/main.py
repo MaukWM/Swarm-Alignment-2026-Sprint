@@ -1,6 +1,7 @@
 """Hub API: submit a priority program, see each account's best score and your own submissions.
 
-usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl HUB_SEED=<int> uvicorn swarmsprint.hub.main:app --port 18080
+usage: HUB_ACCOUNTS=accounts.json HUB_EVENTS=events.jsonl HUB_SEED=<int> \
+       HUB_CREDITS='{"start": 10, "per_minute": 1, "per_submission": 1}' uvicorn swarmsprint.hub.main:app --port 18080
 accounts.json maps account name -> bearer token.
 """
 
@@ -18,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from swarmsprint.hub.schemas import LeaderboardRow, MeResponse, SubmitRequest, SubmitResponse
-from swarmsprint.hub.store import Store
+from swarmsprint.hub.store import INTERNAL_ERROR, Credits, Store
 from swarmsprint.scoring.score import ScoreResult, score, weibull_instances
 
 MAX_BODY = 200_000  # bytes; a program may be 100 KB
@@ -29,7 +30,9 @@ SCORING = threading.BoundedSemaphore(4)  # scorer containers running at once (1 
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     accounts = json.loads(Path(os.environ["HUB_ACCOUNTS"]).read_text())
     instances = weibull_instances(int(os.environ["HUB_SEED"]))
-    app.state.store = Store(accounts, Path(os.environ["HUB_EVENTS"]), instances)
+    credits = Credits(**json.loads(os.environ["HUB_CREDITS"]))
+    app.state.store = Store(accounts, Path(os.environ["HUB_EVENTS"]), instances, credits)
+    app.state.store.log("hub_start", None, None, credits=credits._asdict())
     yield
 
 
@@ -111,7 +114,7 @@ def index() -> dict[str, Any]:
         "endpoints": {
             "POST /submit": "score a program: {program, remark}",
             "GET /leaderboard": "best score of each account (average bins used, lower is better)",
-            "GET /me": "your best score and your submissions",
+            "GET /me": "your best score, your credits and your submissions",
         },
         "docs": "/docs",
     }
@@ -119,20 +122,20 @@ def index() -> dict[str, Any]:
 
 @app.post("/submit")
 def submit(body: SubmitRequest, caller: CallerDep, store: StoreDep) -> SubmitResponse:
-    """Score the program in a throwaway container and record it; one submission per account at a time."""
+    """Pay for, score and record a program in a throwaway container; one submission per account at a time."""
     s = store.receive(caller.name, body)
-    if s is None:
-        raise HTTPException(429, "your previous submission is still being scored")
     store.log("submit_received", caller.name, caller.token, id=s.id, program=body.program, remark=body.remark)
     try:
         with SCORING:
             result = score(body.program, store.instances)
     except Exception:
-        store.finish(s, ScoreResult(error="internal scoring error; not your program's fault, please resubmit"))
+        store.finish(s, ScoreResult(error=INTERNAL_ERROR))
         raise
     store.finish(s, result)
     rank = next((r.rank for r in store.ranking() if r.account == caller.name), None)
-    response = SubmitResponse(id=s.id, score=s.score, error=s.error, rank=rank)
+    response = SubmitResponse(
+        id=s.id, score=s.score, error=s.error, rank=rank, credits=round(store.balance(caller.name), 2)
+    )
     store.log("submit", caller.name, caller.token, response=response.model_dump())
     return response
 
@@ -150,5 +153,6 @@ def me(caller: CallerDep, store: StoreDep) -> MeResponse:
     """Your best score and all your submissions, including their code."""
     mine = store.of(caller.name)
     best = min((s.score for s in mine if s.score is not None), default=None)
-    store.log("me", caller.name, caller.token, best=best, submission_ids=[s.id for s in mine])
-    return MeResponse(account=caller.name, best=best, submissions=mine)
+    credits = round(store.balance(caller.name), 2)
+    store.log("me", caller.name, caller.token, best=best, credits=credits, submission_ids=[s.id for s in mine])
+    return MeResponse(account=caller.name, best=best, credits=credits, submissions=mine)

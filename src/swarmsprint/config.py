@@ -31,6 +31,9 @@ class RunConfig(BaseModel):
     max_output: int = Field(default=4000, gt=0, description="characters of command output the model sees")
     seed: int | None = Field(default=None, description="seed of the hidden instances; random (and logged) if unset")
     api: Literal["chat", "responses"] = Field(default="chat", description="responses: OpenAI reasoning models")
+    credits_start: float = Field(default=10, ge=0, description="credits each agent starts with")
+    credits_per_minute: float = Field(default=1, ge=0, description="credits each agent earns per minute")
+    credits_per_submission: float = Field(default=1, ge=0, description="credits a submission costs")
     hub_host: str = Field(default="binpacking-hub.org", description="hostname agents use, port 80")
     hub_port: int = Field(default=18080, gt=0, lt=65536, description="port of the hub on the host")
 

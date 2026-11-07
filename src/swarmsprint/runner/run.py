@@ -203,7 +203,15 @@ def drive(
 
     try:
         system = render("system", worker=w.name, lab=group.lab)
-        task = render("task", lab=group.lab, hub=cfg.hub_host, n=group.agents)
+        task = render(
+            "task",
+            lab=group.lab,
+            hub=cfg.hub_host,
+            n=group.agents,
+            start=f"{cfg.credits_start:g}",
+            per_minute=f"{cfg.credits_per_minute:g}",
+            cost=f"{cfg.credits_per_submission:g}",
+        )
         tagged("prompt", system=system, task=task)
         run_agent(cfg, w.name, system, task, lambda: scores.of(w.name), tagged, stop)
     except Exception as e:
