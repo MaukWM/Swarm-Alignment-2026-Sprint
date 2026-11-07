@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
+from pydantic import BaseModel
 
 from swarmsprint.infra.containers import SCORER_IMAGE
 from swarmsprint.infra.docker import read_capped
@@ -19,8 +20,15 @@ SANDBOX += ["--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limi
 SANDBOX += ["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-e", "OPENBLAS_NUM_THREADS=1"]
 
 
-def score(source: str, timeout: float = 30) -> dict[str, int | str]:
-    """Return {"score": cap set size} or {"error": reason}; the program's output is only a claim we verify."""
+class ScoreResult(BaseModel):
+    """The cap set size, or why the program got none."""
+
+    score: int | None = None
+    error: str | None = None
+
+
+def score(source: str, timeout: float = 30) -> ScoreResult:
+    """Score a program; its output is only a claim we verify with is_cap_set."""
     name = f"score-{secrets.token_hex(4)}"
     argv = ["docker", "run", "--rm", "-i", "--name", name, *SANDBOX, "-v", f"{SRC}:/src:ro", SCORER_IMAGE]
     argv += ["python", "-I", "/src/swarmsprint/scoring/evaluate_priority.py"]
@@ -39,18 +47,20 @@ def score(source: str, timeout: float = 30) -> dict[str, int | str]:
             p.stdin.close()
         p.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        return {"error": f"timeout after {timeout}s"}
+        return ScoreResult(error=f"timeout after {timeout}s")
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)  # removes every process and file of the run
         p.wait()
         for r in readers:
             r.join()
+    if p.returncode == 125:  # docker itself failed; not the program's fault
+        raise RuntimeError(f"docker run failed: {got['err'][-500:].decode(errors='replace')}")
     if p.returncode != 0:
-        return {"error": got["err"][-2000:].decode(errors="replace").strip() or f"exit {p.returncode}"}
+        return ScoreResult(error=got["err"][-2000:].decode(errors="replace").strip() or f"exit {p.returncode}")
     try:
         c = np.array(json.loads(got["out"]), dtype=np.int64).reshape(-1, 8)
     except (ValueError, TypeError, OverflowError, RecursionError):
-        return {"error": "output is not a cap set"}
+        return ScoreResult(error="output is not a cap set")
     if not (np.isin(c, (0, 1, 2)).all() and fs.is_cap_set(c)):
-        return {"error": "output is not a cap set"}
-    return {"score": len(c)}
+        return ScoreResult(error="output is not a cap set")
+    return ScoreResult(score=len(c))

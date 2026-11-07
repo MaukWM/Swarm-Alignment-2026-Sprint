@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Two LLM agent swarms racing on one leaderboard"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.162.0",
     "numpy>=2.5.4",
     "pydantic>=2.14.2",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
