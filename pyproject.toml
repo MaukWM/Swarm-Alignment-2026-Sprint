@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Two LLM agent swarms racing on one leaderboard"
 requires-python = ">=3.13"
 dependencies = [
+    "numpy>=2.5.4",
     "pydantic>=2.14.2",
 ]
 
@@ -26,6 +27,8 @@ warn_unreachable = true
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["src/swarmsprint/funsearch_cap_set.py"]  # copied verbatim from DeepMind FunSearch
+force-exclude = true
 target-version = "py313"
 
 [tool.ruff.lint]
